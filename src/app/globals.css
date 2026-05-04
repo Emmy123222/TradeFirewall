@@ -1,26 +1,250 @@
+@import url('https://fonts.googleapis.com/css2?family=Ubuntu:ital,wght@0,300;0,400;0,500;0,700;1,300;1,400;1,500;1,700&display=swap');
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+@theme {
+  --font-sans: "Ubuntu", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", Menlo, monospace;
+  
+  /* Token Terminal-Inspired Design System */
+  --color-background: #050505;
+  --color-surface: #0B0F0E;
+  --color-card: #101413;
+  --color-elevated: #151A18;
+  --color-border: #252A28;
+  --color-text-primary: #F4F4F4;
+  --color-text-secondary: #A3A3A3;
+  --color-text-muted: #737373;
+  --color-primary: #00D395;
+  --color-primary-hover: #00B884;
+  --color-primary-soft: rgba(0, 211, 149, 0.12);
+  
+  /* Risk Colors */
+  --color-success: #00D395;
+  --color-warning: #FACC15;
+  --color-orange-risk: #F97316;
+  --color-danger: #EF4444;
+  
+  /* Shadcn/UI compatibility */
+  --color-foreground: var(--color-text-primary);
+  --color-card-foreground: var(--color-text-primary);
+  --color-popover: var(--color-card);
+  --color-popover-foreground: var(--color-text-primary);
+  --color-primary-foreground: #050505;
+  --color-secondary: var(--color-surface);
+  --color-secondary-foreground: var(--color-text-primary);
+  --color-muted: var(--color-surface);
+  --color-muted-foreground: var(--color-text-secondary);
+  --color-accent: var(--color-surface);
+  --color-accent-foreground: var(--color-text-primary);
+  --color-destructive: var(--color-danger);
+  --color-destructive-foreground: #FFFFFF;
+  --color-input: var(--color-card);
+  --color-ring: var(--color-primary);
+  
+  --radius: 1rem;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+@layer base {
+  * {
+    @apply border-border;
+  }
+  
+  body {
+    @apply bg-background text-text-primary font-sans antialiased;
+    background: #050505;
+    color: #F4F4F4;
+  }
+  
+  html {
+    @apply font-sans;
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+@layer utilities {
+  /* Typography classes */
+  .text-hero {
+    font-size: clamp(2.375rem, 6vw, 4rem);
+    font-weight: 700;
+    line-height: 1.05;
+    letter-spacing: -0.04em;
+    color: #F4F4F4;
+  }
+  
+  .text-section-heading {
+    font-size: clamp(1.75rem, 4vw, 2.25rem);
+    font-weight: 700;
+    color: #F4F4F4;
+  }
+  
+  .text-card-heading {
+    font-size: 1.125rem;
+    font-weight: 600;
+    color: #F4F4F4;
+  }
+  
+  .text-body {
+    font-size: 1rem;
+    font-weight: 400;
+    line-height: 1.6;
+    color: #A3A3A3;
+  }
+  
+  .text-label {
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: #737373;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+
+  /* Professional card styling */
+  .terminal-card {
+    background: #101413;
+    border: 1px solid #252A28;
+    border-radius: 1rem;
+  }
+  
+  .terminal-card-elevated {
+    background: #151A18;
+    border: 1px solid #252A28;
+    border-radius: 1rem;
+  }
+  
+  /* Button styles */
+  .btn-primary {
+    background: #00D395;
+    color: #050505;
+    font-weight: 600;
+    border-radius: 9999px;
+    transition: all 0.2s ease;
+  }
+  
+  .btn-primary:hover {
+    background: #00B884;
+  }
+  
+  .btn-secondary {
+    background: transparent;
+    border: 1px solid #333;
+    color: #F4F4F4;
+    font-weight: 500;
+    border-radius: 0.625rem;
+    transition: all 0.2s ease;
+  }
+  
+  .btn-secondary:hover {
+    border-color: #00D395;
+  }
+  
+  .btn-danger {
+    background: transparent;
+    border: 1px solid #EF4444;
+    color: #EF4444;
+    font-weight: 500;
+    border-radius: 0.625rem;
+  }
+  
+  /* Risk colors */
+  .risk-low { color: #00D395; }
+  .risk-medium { color: #FACC15; }
+  .risk-high { color: #F97316; }
+  .risk-critical { color: #EF4444; }
+  
+  .bg-risk-low { background-color: rgba(0, 211, 149, 0.1); }
+  .bg-risk-medium { background-color: rgba(250, 204, 21, 0.1); }
+  .bg-risk-high { background-color: rgba(249, 115, 22, 0.1); }
+  .bg-risk-critical { background-color: rgba(239, 68, 68, 0.1); }
+  
+  /* Table styles */
+  .terminal-table {
+    background: #101413;
+    border: 1px solid #252A28;
+    border-radius: 0.75rem;
+  }
+  
+  .terminal-table th {
+    background: #0B0F0E;
+    color: #737373;
+    font-size: 0.75rem;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid #252A28;
+  }
+  
+  .terminal-table td {
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid #252A28;
+    font-size: 0.875rem;
+  }
+  
+  .terminal-table tr:last-child td {
+    border-bottom: none;
+  }
+  
+  /* Navbar */
+  .terminal-navbar {
+    background: #050505;
+    border-bottom: 1px solid #1A1A1A;
+    height: 72px;
+  }
+  
+  /* Logo styling */
+  .logo-text {
+    font-weight: 500;
+    color: #F4F4F4;
+  }
+  
+  .logo-underscore {
+    color: #00D395;
+  }
+  
+  /* Announcement bar */
+  .announcement-pill {
+    background: rgba(0, 211, 149, 0.05);
+    border: 1px solid #252A28;
+    border-radius: 9999px;
+    padding: 0.5rem 1rem;
+    font-size: 0.875rem;
+    color: #A3A3A3;
+  }
+  
+  /* Trusted by section */
+  .trusted-pill {
+    background: #0B0F0E;
+    border: 1px solid #252A28;
+    border-radius: 0.5rem;
+    padding: 0.5rem 1rem;
+    font-size: 0.75rem;
+    color: #737373;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  
+  /* Subtle animations */
+  .fade-in {
+    animation: fadeIn 0.6s ease-out;
+  }
+  
+  @keyframes fadeIn {
+    from {
+      opacity: 0;
+      transform: translateY(20px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  
+  /* Hover effects */
+  .hover-lift {
+    transition: transform 0.2s ease, border-color 0.2s ease;
+  }
+  
+  .hover-lift:hover {
+    transform: translateY(-2px);
+    border-color: #00D395;
+  }
 }
