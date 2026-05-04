@@ -42,7 +42,7 @@ class ClipboardManager {
     
     // Get main risk factors (scores > 60)
     const mainRisks = Object.entries(reportData.riskFactors)
-      .filter(([_, score]) => score > 60)
+      .filter(([_, score]) => typeof score === 'number' && score > 60)
       .map(([factor, _]) => `- ${factor.replace(/([A-Z])/g, ' $1').toLowerCase()}`)
       .slice(0, 5); // Limit to top 5 risks
 

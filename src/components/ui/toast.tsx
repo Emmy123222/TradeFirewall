@@ -2,10 +2,10 @@
 "use client";
 
 import React from 'react';
-import { useToasts } from '@/lib/toast';
+import { useToast } from '@/lib/toast';
 
 export function ToastContainer() {
-  const { toasts, removeToast } = useToasts();
+  const { toasts, removeToast } = useToast();
 
   if (toasts.length === 0) return null;
 
