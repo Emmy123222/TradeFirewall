@@ -14,7 +14,8 @@ interface DashboardMetrics {
   blockedTrades: number;
   reducedSizeRecommendations: number;
   highRiskAlerts: number;
-  simulatedLossesAvoided: number;
+  /** Sum of user-entered trade amounts for reports with decision BLOCK (not a PnL claim) */
+  blockedNotionalUsd: number;
   tradesChecked: number;
 }
 
@@ -83,7 +84,7 @@ export default function DashboardPage() {
             blockedTrades: 0,
             reducedSizeRecommendations: 0,
             highRiskAlerts: 0,
-            simulatedLossesAvoided: 0,
+            blockedNotionalUsd: 0,
             tradesChecked: 0
           });
         }
@@ -119,7 +120,7 @@ export default function DashboardPage() {
         blockedTrades: 0,
         reducedSizeRecommendations: 0,
         highRiskAlerts: 0,
-        simulatedLossesAvoided: 0,
+        blockedNotionalUsd: 0,
         tradesChecked: 0
       };
     }
@@ -131,13 +132,10 @@ export default function DashboardPage() {
       report.recommendedAction.toLowerCase().includes('reduce')
     ).length;
     
-    // Estimate losses avoided based on blocked high-risk trades
-    const highRiskBlockedTrades = reports.filter(report => 
-      report.decision === 'BLOCK' && report.riskScore >= 70
+    const blockedReports = reports.filter((report) => report.decision === 'BLOCK');
+    const blockedNotionalUsd = Math.round(
+      blockedReports.reduce((sum, report) => sum + (Number(report.amount) || 0), 0)
     );
-    const simulatedLossesAvoided = highRiskBlockedTrades.reduce((sum, report) => {
-      return sum + (report.amount * 0.15); // Estimate 15% loss avoided
-    }, 0);
 
     const highRiskAlerts = reports.filter(report => report.riskScore >= 70).length;
 
@@ -146,7 +144,7 @@ export default function DashboardPage() {
       blockedTrades,
       reducedSizeRecommendations,
       highRiskAlerts,
-      simulatedLossesAvoided: Math.round(simulatedLossesAvoided),
+      blockedNotionalUsd,
       tradesChecked: reports.length
     };
   };
@@ -387,12 +385,15 @@ export default function DashboardPage() {
 
           <Card className="terminal-card">
             <CardHeader className="pb-3">
-              <CardTitle className="text-label">Losses Avoided</CardTitle>
+              <CardTitle className="text-label">Blocked notional</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold text-success">
-                {metrics.simulatedLossesAvoided > 0 ? `$${metrics.simulatedLossesAvoided.toLocaleString()}` : '$0'}
+                {metrics.blockedNotionalUsd > 0 ? `$${metrics.blockedNotionalUsd.toLocaleString()}` : '—'}
               </div>
+              <p className="text-xs text-text-secondary mt-2">
+                Sum of saved trade sizes where the engine returned BLOCK (not a simulated PnL).
+              </p>
             </CardContent>
           </Card>
 
@@ -430,9 +431,11 @@ export default function DashboardPage() {
                     <div className="text-lg font-medium text-danger">{metrics.blockedTrades}</div>
                   </div>
                   <div>
-                    <div className="text-label">Est. Losses Avoided</div>
+                    <div className="text-label">Blocked notional (saved)</div>
                     <div className="text-lg font-medium text-success">
-                      ${metrics.simulatedLossesAvoided.toLocaleString()}
+                      {metrics.blockedNotionalUsd > 0
+                        ? `$${metrics.blockedNotionalUsd.toLocaleString()}`
+                        : '—'}
                     </div>
                   </div>
                 </div>
