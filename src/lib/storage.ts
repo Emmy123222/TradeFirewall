@@ -25,6 +25,8 @@ export interface SavedReport {
   suggestedPositionSize: string;
   dataSourcesUsed: string[];
   dataSourcesReport?: DataSourcesReport;
+  /** Matches API analysis `timestamp` — replacing an existing row with the same id avoids duplicates */
+  clientRunId?: number;
   createdAt: number;
   status?: 'completed' | 'cancelled';
 }
@@ -120,9 +122,13 @@ class StorageManager {
 
   saveReport(report: Omit<SavedReport, 'id' | 'createdAt'>): { success: boolean; message: string; reportId?: string } {
     try {
-      const reports = this.getReports();
+      let reports = this.getReports();
       const reportId = `report_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      
+
+      if (report.clientRunId !== undefined && report.clientRunId !== null) {
+        reports = reports.filter((r) => r.clientRunId !== report.clientRunId);
+      }
+
       const newReport: SavedReport = {
         ...report,
         id: reportId,
@@ -132,7 +138,11 @@ class StorageManager {
 
       reports.unshift(newReport); // Add to beginning
       localStorage.setItem(this.REPORTS_KEY, JSON.stringify(reports));
-      
+
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('tradefirewall-reports-changed'));
+      }
+
       return { success: true, message: 'Risk report saved.', reportId };
     } catch (error) {
       console.error('Error saving report:', error);

@@ -118,8 +118,13 @@ export default function DashboardPage() {
 
     loadData(true);
     const onFocus = () => loadData(false);
+    const onReportsChanged = () => loadData(false);
     window.addEventListener('focus', onFocus);
-    return () => window.removeEventListener('focus', onFocus);
+    window.addEventListener('tradefirewall-reports-changed', onReportsChanged as EventListener);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      window.removeEventListener('tradefirewall-reports-changed', onReportsChanged as EventListener);
+    };
   }, []);
 
   const calculateMetricsFromReports = (reports: any[]): DashboardMetrics => {

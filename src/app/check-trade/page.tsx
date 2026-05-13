@@ -17,6 +17,30 @@ import { storageManager, WatchlistItem, SavedReport } from '@/lib/storage';
 import { pdfGenerator, RiskReportData } from '@/lib/pdfGenerator';
 import { toast } from '@/lib/toast';
 
+function savedReportFieldsFromApiResult(result: {
+  tradeInput: TradeInput;
+  riskAnalysis: RiskAnalysis;
+  riskExplanation: RiskExplanation;
+  timestamp: number;
+}): Omit<SavedReport, 'id' | 'createdAt'> {
+  return {
+    symbol: result.tradeInput.symbol,
+    action: result.tradeInput.action,
+    amount: result.tradeInput.amount,
+    holdingPeriod: result.tradeInput.holdingPeriod,
+    riskProfile: result.tradeInput.riskProfile,
+    riskScore: result.riskAnalysis.riskScore,
+    decision: result.riskAnalysis.decision,
+    riskFactors: result.riskAnalysis.marketFactors,
+    explanation: result.riskExplanation.summary,
+    recommendedAction: result.riskAnalysis.saferAction,
+    suggestedPositionSize: result.riskAnalysis.suggestedPositionSize,
+    dataSourcesUsed: result.riskAnalysis.dataSourcesUsed,
+    dataSourcesReport: result.riskAnalysis.dataSourcesReport,
+    clientRunId: result.timestamp,
+  };
+}
+
 interface AnalysisResult {
   tradeInput: TradeInput;
   riskAnalysis: RiskAnalysis;
@@ -84,6 +108,13 @@ export default function CheckTradePage() {
 
       const result = await response.json();
       setAnalysisResult(result);
+
+      try {
+        storageManager.saveReport(savedReportFieldsFromApiResult(result));
+        setRecentReports(storageManager.getReports().slice(0, 5));
+      } catch (e) {
+        console.error('Failed to persist analysis to localStorage', e);
+      }
 
       // Show confirmation gate for high-risk trades
       if (result.riskAnalysis.riskScore >= 51) {
@@ -170,10 +201,11 @@ export default function CheckTradePage() {
     // Mark report as cancelled if it was saved
     if (analysisResult) {
       const reports = storageManager.getReports();
-      const latestReport = reports[0];
-      if (latestReport && latestReport.symbol === analysisResult.tradeInput.symbol) {
-        storageManager.updateReportStatus(latestReport.id, 'cancelled');
-        // Refresh recent reports state after updating status
+      const match =
+        reports.find((r) => r.clientRunId === analysisResult.timestamp) ??
+        (reports[0]?.symbol === analysisResult.tradeInput.symbol ? reports[0] : null);
+      if (match) {
+        storageManager.updateReportStatus(match.id, 'cancelled');
         setRecentReports(storageManager.getReports().slice(0, 5));
       }
     }
@@ -207,21 +239,7 @@ export default function CheckTradePage() {
       return;
     }
     
-    const result = storageManager.saveReport({
-      symbol: analysisResult.tradeInput.symbol,
-      action: analysisResult.tradeInput.action,
-      amount: analysisResult.tradeInput.amount,
-      holdingPeriod: analysisResult.tradeInput.holdingPeriod,
-      riskProfile: analysisResult.tradeInput.riskProfile,
-      riskScore: analysisResult.riskAnalysis.riskScore,
-      decision: analysisResult.riskAnalysis.decision,
-      riskFactors: analysisResult.riskAnalysis.marketFactors,
-      explanation: analysisResult.riskExplanation.summary,
-      recommendedAction: analysisResult.riskAnalysis.saferAction,
-      suggestedPositionSize: analysisResult.riskAnalysis.suggestedPositionSize,
-      dataSourcesUsed: analysisResult.riskAnalysis.dataSourcesUsed,
-      dataSourcesReport: analysisResult.riskAnalysis.dataSourcesReport,
-    });
+    const result = storageManager.saveReport(savedReportFieldsFromApiResult(analysisResult));
     
     if (result.success) {
       toast.success(result.message);
@@ -612,8 +630,11 @@ export default function CheckTradePage() {
                     <Button onClick={handleSaveReport} className="btn-secondary text-sm">Save Report</Button>
                   </div>
                   <p className="text-xs text-text-secondary">
-                    Dashboard history only includes runs you <strong className="text-text-primary">save</strong> here
-                    (stored in this browser). Analyze alone does not add a row to the Dashboard.
+                    Successful analyses are saved to this browser automatically and appear on the{' '}
+                    <Link href="/dashboard" className="text-primary underline-offset-2 hover:underline">
+                      Dashboard
+                    </Link>
+                    . Use Save Report to refresh the stored copy of this same run (e.g. after re-reading the page).
                   </p>
                   
                   <div className="grid grid-cols-2 gap-2">
