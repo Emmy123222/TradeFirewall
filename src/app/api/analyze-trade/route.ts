@@ -32,17 +32,25 @@ export async function POST(request: NextRequest) {
     // Generate risk intelligence explanation based on real risk analysis
     const riskExplanation = riskExplanationGenerator.generateExplanation(riskAnalysis, tradeInput);
 
-    // Return comprehensive risk report
+    const { dataSourcesReport } = riskAnalysis;
+
     return NextResponse.json({
       tradeInput,
       riskAnalysis,
       riskExplanation,
       timestamp: Date.now(),
+      dataSourcesReport,
       apiStatus: {
-        sosoValueConnected: riskAnalysis.dataSourcesUsed.includes('SoSoValue Market Intelligence'),
-        sodexConnected: riskAnalysis.dataSourcesUsed.includes('SoDEX Market Data'),
-        dataSourcesUsed: riskAnalysis.dataSourcesUsed
-      }
+        sosoValueConnected: dataSourcesReport.sosoValue.live,
+        sodexConnected: dataSourcesReport.sodex.live,
+        sosoValueLabel: dataSourcesReport.sosoValue.live
+          ? 'SoSoValue: Connected'
+          : 'SoSoValue: Unavailable',
+        sodexLabel: dataSourcesReport.sodex.live ? 'SoDEX: Connected' : 'SoDEX: Unavailable',
+        lastUpdatedIso: dataSourcesReport.lastUpdatedIso,
+        lastUpdatedDisplay: dataSourcesReport.lastUpdatedDisplay,
+        dataSourcesUsed: riskAnalysis.dataSourcesUsed,
+      },
     });
 
   } catch (error) {
@@ -54,7 +62,7 @@ export async function POST(request: NextRequest) {
         { 
           error: error.message,
           errorType: 'API_CONNECTION_ERROR',
-          suggestion: 'Configure SOSOVALUE_API_KEY in environment variables'
+          suggestion: 'Set SOSOVALUE_API_KEY in .env.local (server-side; never commit the real key).'
         },
         { status: 503 }
       );
