@@ -22,6 +22,16 @@ interface AnalysisResult {
   riskAnalysis: RiskAnalysis;
   riskExplanation: RiskExplanation;
   timestamp: number;
+  apiStatus?: {
+    sosoValueConnected: boolean;
+    sodexConnected: boolean;
+    sosoValueLabel: string;
+    sodexLabel: string;
+    lastUpdatedIso: string;
+    lastUpdatedDisplay: string;
+    dataSourcesUsed: string[];
+  };
+  dataSourcesReport?: RiskAnalysis['dataSourcesReport'];
 }
 
 export default function CheckTradePage() {
@@ -86,8 +96,16 @@ export default function CheckTradePage() {
       if (error instanceof Error) {
         if (error.message.includes('Symbol') && error.message.includes('not found')) {
           toast.error('Symbol not found on SoDEX exchange. Please verify the symbol exists.');
-        } else if (error.message.includes('Live market data is not connected')) {
-          toast.error('Live market data is not connected. Please configure API keys.');
+        } else if (
+          error.message.includes('SOSOVALUE_API_KEY') ||
+          error.message.includes('SoSoValue') ||
+          error.message.includes('API Key')
+        ) {
+          toast.error(
+            'Live SoSoValue data is not configured. Add SOSOVALUE_API_KEY to .env.local and restart the dev server.'
+          );
+        } else if (error.message.includes('SoDEX') || error.message.includes('orderbook')) {
+          toast.error(`SoDEX data error: ${error.message}`);
         } else if (error.message.includes('Market data is temporarily unavailable')) {
           toast.error('Market data is temporarily unavailable. Please try again later.');
         } else {
@@ -201,7 +219,8 @@ export default function CheckTradePage() {
       explanation: analysisResult.riskExplanation.summary,
       recommendedAction: analysisResult.riskAnalysis.saferAction,
       suggestedPositionSize: analysisResult.riskAnalysis.suggestedPositionSize,
-      dataSourcesUsed: analysisResult.riskAnalysis.dataSourcesUsed
+      dataSourcesUsed: analysisResult.riskAnalysis.dataSourcesUsed,
+      dataSourcesReport: analysisResult.riskAnalysis.dataSourcesReport,
     });
     
     if (result.success) {
@@ -258,6 +277,7 @@ export default function CheckTradePage() {
         recommendedAction: analysisResult.riskAnalysis.saferAction,
         suggestedPositionSize: analysisResult.riskAnalysis.suggestedPositionSize,
         dataSourcesUsed: analysisResult.riskAnalysis.dataSourcesUsed,
+        dataSourcesReport: analysisResult.riskAnalysis.dataSourcesReport,
         timestamp: analysisResult.timestamp
       };
       
@@ -289,6 +309,7 @@ export default function CheckTradePage() {
         recommendedAction: analysisResult.riskAnalysis.saferAction,
         suggestedPositionSize: analysisResult.riskAnalysis.suggestedPositionSize,
         dataSourcesUsed: analysisResult.riskAnalysis.dataSourcesUsed,
+        dataSourcesReport: analysisResult.riskAnalysis.dataSourcesReport,
         timestamp: analysisResult.timestamp
       };
       
@@ -429,6 +450,115 @@ export default function CheckTradePage() {
             )}
           </div>
 
+          {/* Live integrations proof */}
+          {analysisResult && (
+            <div className="col-span-12 grid grid-cols-1 lg:grid-cols-3 gap-4">
+              <Card className="terminal-card border-primary/20">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-base font-semibold">API status</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2 text-sm">
+                  <div className="flex flex-wrap gap-2">
+                    <Badge
+                      className={
+                        analysisResult.apiStatus?.sosoValueConnected
+                          ? 'bg-success/15 text-success border border-success/30'
+                          : 'bg-danger/15 text-danger border border-danger/30'
+                      }
+                    >
+                      {analysisResult.apiStatus?.sosoValueLabel || 'SoSoValue'}
+                    </Badge>
+                    <Badge
+                      className={
+                        analysisResult.apiStatus?.sodexConnected
+                          ? 'bg-success/15 text-success border border-success/30'
+                          : 'bg-danger/15 text-danger border border-danger/30'
+                      }
+                    >
+                      {analysisResult.apiStatus?.sodexLabel || 'SoDEX'}
+                    </Badge>
+                  </div>
+                  <div className="text-text-secondary">
+                    Last updated:{' '}
+                    <span className="text-text-primary font-medium">
+                      {analysisResult.apiStatus?.lastUpdatedDisplay ||
+                        analysisResult.riskAnalysis.dataSourcesReport.lastUpdatedDisplay}
+                    </span>
+                  </div>
+                  <p className="text-xs text-text-secondary">
+                    Risk score is computed only after both providers return live payloads for this symbol.
+                  </p>
+                </CardContent>
+              </Card>
+
+              <Card className="terminal-card lg:col-span-2">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-base font-semibold">Live market snapshot</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                    <div>
+                      <div className="text-text-secondary text-xs uppercase tracking-wide">SoSoValue price</div>
+                      <div className="text-text-primary font-mono text-lg">
+                        ${Number(analysisResult.riskAnalysis.liveSnapshot.sosoPrice).toLocaleString(undefined, { maximumFractionDigits: 6 })}
+                      </div>
+                      <div className="text-xs text-text-secondary">
+                        24h: {Number(analysisResult.riskAnalysis.liveSnapshot.sosoChange24hPct).toFixed(2)}%
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-text-secondary text-xs uppercase tracking-wide">SoDEX last</div>
+                      <div className="text-text-primary font-mono text-lg">
+                        {analysisResult.riskAnalysis.liveSnapshot.sodexLast}
+                      </div>
+                      <div className="text-xs text-text-secondary">{analysisResult.riskAnalysis.liveSnapshot.sodexSymbol}</div>
+                    </div>
+                    <div>
+                      <div className="text-text-secondary text-xs uppercase tracking-wide">Bid / Ask</div>
+                      <div className="text-text-primary font-mono">
+                        {analysisResult.riskAnalysis.liveSnapshot.sodexBid} / {analysisResult.riskAnalysis.liveSnapshot.sodexAsk}
+                      </div>
+                      <div className="text-xs text-text-secondary">
+                        Spread: {analysisResult.riskAnalysis.liveSnapshot.spreadPercent.toFixed(3)}%
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-text-secondary text-xs uppercase tracking-wide">24h volume (base)</div>
+                      <div className="text-text-primary font-mono">{analysisResult.riskAnalysis.liveSnapshot.sodexVolume}</div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card className="col-span-1 lg:col-span-3 terminal-card">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-base font-semibold">Data sources used</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3 text-sm text-text-secondary">
+                  <ul className="list-disc pl-5 space-y-1">
+                    {analysisResult.riskAnalysis.dataSourcesReport.lines.map((line, i) => (
+                      <li key={i}>{line}</li>
+                    ))}
+                  </ul>
+                  <div className="grid md:grid-cols-2 gap-4 text-xs font-mono bg-surface/50 p-3 rounded-lg border border-border">
+                    <div>
+                      <div className="text-text-primary font-sans font-semibold mb-1">SoSoValue endpoints</div>
+                      {analysisResult.riskAnalysis.dataSourcesReport.sosoValue.endpoints.map((e) => (
+                        <div key={e}>{e}</div>
+                      ))}
+                    </div>
+                    <div>
+                      <div className="text-text-primary font-sans font-semibold mb-1">SoDEX endpoints ({analysisResult.riskAnalysis.dataSourcesReport.sodex.network})</div>
+                      {analysisResult.riskAnalysis.dataSourcesReport.sodex.endpoints.map((e) => (
+                        <div key={e}>{e}</div>
+                      ))}
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          )}
+
           {/* Loading State - Full Width */}
           {isLoading && (
             <div className="col-span-12">
@@ -532,11 +662,13 @@ export default function CheckTradePage() {
                   <div className="space-y-2 text-sm">
                     <div className="flex justify-between">
                       <span className="text-text-secondary">Mode:</span>
-                      <span className="text-text-primary">{executionResult.execution?.network || 'Preview'}</span>
+                      <span className="text-text-primary">
+                        {executionResult.mode === 'preview_only' ? 'Preview only (no chain execution)' : executionResult.mode || 'Preview'}
+                      </span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-text-secondary">Status:</span>
-                      <span className="text-success font-medium">{executionResult.execution?.status || 'Preview Only'}</span>
+                      <span className="text-success font-medium">{executionResult.status || 'Preview generated'}</span>
                     </div>
                   </div>
                 </CardContent>

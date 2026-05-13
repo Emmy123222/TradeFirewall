@@ -1,5 +1,5 @@
 // PDF generation utility for TradeFirewall risk reports
-import { SavedReport } from './storage';
+import type { DataSourcesReport } from './riskEngine';
 
 export interface RiskReportData {
   symbol: string;
@@ -14,6 +14,7 @@ export interface RiskReportData {
   recommendedAction: string;
   suggestedPositionSize: string;
   dataSourcesUsed: string[];
+  dataSourcesReport?: DataSourcesReport;
   timestamp: number;
 }
 
@@ -299,8 +300,15 @@ class PDFGenerator {
         </div>
     </div>
 
+    <div class="section">
+        <h2 class="section-title">Data sources used</h2>
+        <div class="trade-details">
+            ${data.dataSourcesReport ? this.generateDataSourcesHTML(data.dataSourcesReport) : `<p><strong>Summary:</strong> ${data.dataSourcesUsed.join('<br>')}</p>`}
+        </div>
+    </div>
+
     <div class="data-sources">
-        <strong>Data Sources:</strong> ${data.dataSourcesUsed.join(', ')}
+        <strong>Data sources (summary):</strong> ${data.dataSourcesUsed.join('; ')}
     </div>
 
     <div class="disclaimer">
@@ -316,6 +324,37 @@ class PDFGenerator {
     </div>
 </body>
 </html>`;
+  }
+
+  private escapeHtml(s: string): string {
+    return s
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  private generateDataSourcesHTML(report: DataSourcesReport): string {
+    const lines = report.lines.map((l) => `<li>${this.escapeHtml(l)}</li>`).join('');
+    const sEndpoints = report.sosoValue.endpoints.map((e) => this.escapeHtml(e)).join(', ');
+    const dEndpoints = report.sodex.endpoints.map((e) => this.escapeHtml(e)).join(', ');
+    return `
+      <p><strong>Last updated:</strong> ${this.escapeHtml(report.lastUpdatedDisplay)} <span style="color:#6b7280">(${this.escapeHtml(report.lastUpdatedIso)})</span></p>
+      <ul>${lines}</ul>
+      <p><strong>SoSoValue</strong> — ${report.sosoValue.live ? 'live' : 'unavailable'}: ${this.escapeHtml(report.sosoValue.categories.join(', '))}</p>
+      <p style="font-size:12px;color:#555">Endpoints: ${sEndpoints}</p>
+      <p><strong>SoDEX</strong> — ${report.sodex.live ? 'live' : 'unavailable'} (${this.escapeHtml(report.sodex.network)}): ${this.escapeHtml(report.sodex.categories.join(', '))}</p>
+      <p style="font-size:12px;color:#555">Endpoints: ${dEndpoints}</p>
+    `;
+  }
+
+  private generateDataSourcesPlainText(report: DataSourcesReport): string {
+    return [
+      'Data sources used:',
+      ...report.lines.map((l) => `- ${l}`),
+      `SoSoValue endpoints: ${report.sosoValue.endpoints.join(', ')}`,
+      `SoDEX (${report.sodex.network}) endpoints: ${report.sodex.endpoints.join(', ')}`,
+    ].join('\n');
   }
 
   private getRiskScoreClass(score: number): string {
@@ -372,7 +411,7 @@ Recommended Action:
 ${data.recommendedAction}
 
 ${data.suggestedPositionSize ? `Suggested Position Size: ${data.suggestedPositionSize}\n` : ''}
-Data Sources: ${data.dataSourcesUsed.join(', ')}
+${data.dataSourcesReport ? this.generateDataSourcesPlainText(data.dataSourcesReport) : `Data Sources: ${data.dataSourcesUsed.join(', ')}`}
 Generated: ${date}
 
 Disclaimer:

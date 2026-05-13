@@ -5,13 +5,7 @@ import { Badge } from '@/components/ui/badge';
 
 interface RiskFactorsListProps {
   reasons: string[];
-  marketFactors: {
-    volatility: number;
-    sentiment: number;
-    volume: number;
-    trend: number;
-    liquidity: number;
-  };
+  marketFactors: Record<string, number>;
 }
 
 export function RiskFactorsList({ reasons, marketFactors }: RiskFactorsListProps) {
@@ -72,7 +66,13 @@ export function RiskFactorsList({ reasons, marketFactors }: RiskFactorsListProps
                 {Object.entries(marketFactors).map(([factor, value]) => (
                   <tr key={factor}>
                     <td className="text-text-secondary capitalize">
-                      {factor === 'liquidity' ? 'Liquidity Risk' : `${factor} Risk`}
+                      {factor === 'liquidity'
+                        ? 'Liquidity Risk'
+                        : factor === 'holdingPeriod'
+                          ? 'Holding period'
+                          : factor === 'positionSize'
+                            ? 'Position size'
+                            : `${factor} Risk`}
                     </td>
                     <td className="text-text-primary font-medium">{value}/100</td>
                     <td>

@@ -1,4 +1,5 @@
-// Local storage utilities for TradeFirewall user data
+import type { DataSourcesReport } from '@/lib/riskEngine';
+
 export interface WatchlistItem {
   symbol: string;
   addedAt: number;
@@ -23,6 +24,7 @@ export interface SavedReport {
   recommendedAction: string;
   suggestedPositionSize: string;
   dataSourcesUsed: string[];
+  dataSourcesReport?: DataSourcesReport;
   createdAt: number;
   status?: 'completed' | 'cancelled';
 }
