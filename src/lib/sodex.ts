@@ -407,13 +407,14 @@ class SoDEXAPI {
   /**
    * Walk the book in **base asset units**. `notionalUsd` is the trade size in USD;
    * `referencePriceUsdPerBase` is a mid/last price in USD per 1 base (e.g. BTC).
+   * Testnet often has no asks or no bids — then depth walk is skipped (slippage 0, walkSideEmpty).
    */
   async estimateSlippageFromOrderbook(
     symbol: string,
     side: 'BUY' | 'SELL',
     notionalUsd: number,
     referencePriceUsdPerBase: number
-  ): Promise<number> {
+  ): Promise<{ slippage: number; walkSideEmpty: boolean }> {
     if (!Number.isFinite(notionalUsd) || notionalUsd <= 0) {
       throw new Error('Invalid trade notional for slippage estimate');
     }
@@ -425,7 +426,7 @@ class SoDEXAPI {
     const orderbook = await this.getSpotOrderbook(symbol, 100);
     const orders = side === 'BUY' ? orderbook.asks : orderbook.bids;
     if (!orders.length) {
-      throw new Error('SoDEX orderbook side is empty; cannot estimate slippage');
+      return { slippage: 0, walkSideEmpty: true };
     }
     let totalBaseFilled = 0;
     let weightedPrice = 0;
@@ -444,14 +445,63 @@ class SoDEXAPI {
       weightedPrice += price * quantity;
       totalBaseFilled += quantity;
     }
+    if (firstPrice <= 0 || totalBaseFilled <= 0) {
+      return { slippage: 0, walkSideEmpty: true };
+    }
     if (totalBaseFilled < targetBaseQty) {
       throw new Error('Insufficient visible book depth to estimate slippage for this size');
     }
-    if (firstPrice <= 0 || totalBaseFilled <= 0) {
-      throw new Error('Invalid SoDEX book data for slippage');
-    }
     const avgPrice = weightedPrice / totalBaseFilled;
-    return Math.min(Math.abs(avgPrice - firstPrice) / firstPrice, 0.5);
+    return {
+      slippage: Math.min(Math.abs(avgPrice - firstPrice) / firstPrice, 0.5),
+      walkSideEmpty: false,
+    };
+  }
+
+  /**
+   * Top-of-book: bookTicker first, then orderbook top level, then last trade price (illiquid testnet).
+   */
+  private async resolveTopOfBookPrices(
+    symbol: string,
+    orderbook: SodexOrderbook,
+    bookTicker: SodexBookTicker
+  ): Promise<{ bidPrice: number; askPrice: number }> {
+    const bid0 = orderbook.bids[0];
+    const ask0 = orderbook.asks[0];
+    const bookBestBid = bid0 ? parseFloat(bid0.price) : NaN;
+    const bookBestAsk = ask0 ? parseFloat(ask0.price) : NaN;
+
+    let bid = parseFloat(bookTicker.bidPrice);
+    let ask = parseFloat(bookTicker.askPrice);
+
+    if (!Number.isFinite(bid) || bid <= 0) bid = bookBestBid;
+    if (!Number.isFinite(ask) || ask <= 0) ask = bookBestAsk;
+
+    if (!Number.isFinite(bid) || bid <= 0) {
+      bid = Number.isFinite(ask) && ask > 0 ? ask * 0.9995 : bookBestBid;
+    }
+    if (!Number.isFinite(ask) || ask <= 0) {
+      ask = Number.isFinite(bid) && bid > 0 ? bid * 1.0005 : bookBestAsk;
+    }
+
+    if (!Number.isFinite(bid) || bid <= 0 || !Number.isFinite(ask) || ask <= 0) {
+      const t = await this.getSpotTicker(symbol);
+      const last = parseFloat(t.lastPrice);
+      if (Number.isFinite(last) && last > 0) {
+        if (!Number.isFinite(bid) || bid <= 0) bid = last * 0.9995;
+        if (!Number.isFinite(ask) || ask <= 0) ask = last * 1.0005;
+      }
+    }
+
+    if (!Number.isFinite(bid) || bid <= 0 || !Number.isFinite(ask) || ask <= 0) {
+      throw new Error('SoDEX orderbook has no usable top-of-book bid/ask');
+    }
+    if (ask < bid) {
+      const tmp = bid;
+      bid = ask;
+      ask = tmp;
+    }
+    return { bidPrice: bid, askPrice: ask };
   }
 
   async analyzeLiquidity(symbol: string): Promise<{
@@ -464,11 +514,7 @@ class SoDEXAPI {
   }> {
     const orderbook = await this.getSpotOrderbook(symbol);
     const bookTicker = await this.getSpotBookTicker(symbol);
-    const bidPrice = parseFloat(bookTicker.bidPrice);
-    const askPrice = parseFloat(bookTicker.askPrice);
-    if (!Number.isFinite(bidPrice) || !Number.isFinite(askPrice) || bidPrice <= 0 || askPrice <= 0) {
-      throw new Error('SoDEX bid/ask unavailable — cannot analyze liquidity');
-    }
+    const { bidPrice, askPrice } = await this.resolveTopOfBookPrices(symbol, orderbook, bookTicker);
     const spread = askPrice - bidPrice;
     const mid = (bidPrice + askPrice) / 2;
     const spreadPercent = mid > 0 ? (spread / mid) * 100 : 0;
@@ -529,7 +575,12 @@ class SoDEXAPI {
       throw new Error('SoDEX ticker price invalid for execution preview');
     }
     const liquidityAnalysis = await this.analyzeLiquidity(symbol);
-    const slippage = await this.estimateSlippageFromOrderbook(symbol, side, amount, currentPrice);
+    const { slippage, walkSideEmpty } = await this.estimateSlippageFromOrderbook(
+      symbol,
+      side,
+      amount,
+      currentPrice
+    );
     const fees = await this.estimateFeesIfAvailable(symbol);
     const priceImpact = slippage * 0.5;
     const volume24hBase = parseFloat(ticker.volume);
@@ -549,6 +600,11 @@ class SoDEXAPI {
       Math.max(0, (liquidityRatio * 0.3 + volumeRatio * 0.7) * 0.1)
     );
     const warnings: string[] = [];
+    if (walkSideEmpty) {
+      warnings.push(
+        `SoDEX has no visible ${side === 'BUY' ? 'ask' : 'bid'} liquidity in the snapshot; depth-based slippage is not applicable (treated as 0 for preview).`
+      );
+    }
     if (slippage > 0.02) warnings.push('High slippage expected');
     if (executionProbability < 0.8) warnings.push('Low execution probability');
     if (Number.isFinite(quoteVol24h) && quoteVol24h > 0 && amount > quoteVol24h * 0.1) {
