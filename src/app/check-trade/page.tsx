@@ -611,6 +611,10 @@ export default function CheckTradePage() {
                     <Button onClick={handleAddToWatchlist} className="btn-secondary text-sm">Add to Watchlist</Button>
                     <Button onClick={handleSaveReport} className="btn-secondary text-sm">Save Report</Button>
                   </div>
+                  <p className="text-xs text-text-secondary">
+                    Dashboard history only includes runs you <strong className="text-text-primary">save</strong> here
+                    (stored in this browser). Analyze alone does not add a row to the Dashboard.
+                  </p>
                   
                   <div className="grid grid-cols-2 gap-2">
                     <Button onClick={handleDownloadPDF} className="btn-secondary text-sm">Download PDF</Button>

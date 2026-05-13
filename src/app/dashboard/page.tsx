@@ -50,9 +50,11 @@ export default function DashboardPage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const loadData = async () => {
+    const loadData = (showFullPageLoader: boolean) => {
       try {
-        setIsLoading(true);
+        if (showFullPageLoader) {
+          setIsLoading(true);
+        }
         setError(null);
 
         // Load real data from localStorage using storageManager
@@ -60,7 +62,8 @@ export default function DashboardPage() {
         const savedWatchlist = storageManager.getWatchlist();
 
         if (savedReports.length > 0) {
-          setRecentTradeChecks(savedReports.slice(-10).map(report => ({
+          // Newest-first in storage (unshift); show latest checks at the top
+          setRecentTradeChecks(savedReports.slice(0, 10).map(report => ({
             id: report.id,
             time: new Date(report.createdAt).toLocaleDateString(),
             asset: report.symbol,
@@ -79,6 +82,7 @@ export default function DashboardPage() {
           setMetrics(calculatedMetrics);
         } else {
           // No data available - show empty state
+          setRecentTradeChecks([]);
           setMetrics({
             averageRiskScore: null,
             blockedTrades: 0,
@@ -106,11 +110,16 @@ export default function DashboardPage() {
         setError('Failed to load dashboard data');
         console.error('Dashboard data loading error:', err);
       } finally {
-        setIsLoading(false);
+        if (showFullPageLoader) {
+          setIsLoading(false);
+        }
       }
     };
 
-    loadData();
+    loadData(true);
+    const onFocus = () => loadData(false);
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
   }, []);
 
   const calculateMetricsFromReports = (reports: any[]): DashboardMetrics => {
