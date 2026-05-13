@@ -993,25 +993,29 @@ stateDiagram-v2
 
 ## Environment Variables
 
-Create a `.env.example` file:
+Copy `.env.example` to `.env.local` and set at least `SOSOVALUE_API_KEY` for live SoSoValue calls.
 
 ```env
-# SoSoValue
+# SoSoValue OpenAPI (server-side key — do not use NEXT_PUBLIC_ for secrets)
 SOSOVALUE_API_KEY=
-SOSOVALUE_API_BASE_URL=
+# Optional:
+# SOSOVALUE_API_BASE_URL=https://openapi.sosovalue.com/openapi/v1
 
-# SoDEX public market data does not require a normal API key
-SODEX_API_KEY=not_required_for_market_data
+# SoDEX public REST (no API key required for reads)
+SODEX_USE_TESTNET=true
+SODEX_TESTNET_SPOT_URL=https://testnet-gw.sodex.dev/api/v1/spot
+SODEX_TESTNET_PERPS_URL=https://testnet-gw.sodex.dev/api/v1/perps
+# SODEX_MAINNET_SPOT_URL=https://mainnet-gw.sodex.dev/api/v1/spot
+# SODEX_MAINNET_PERPS_URL=https://mainnet-gw.sodex.dev/api/v1/perps
+```
 
-# SoDEX Testnet REST
-SODEX_SPOT_REST_URL=https://testnet-gw.sodex.dev/api/v1/spot
-SODEX_PERPS_REST_URL=https://testnet-gw.sodex.dev/api/v1/perps
+SoDEX signing keys are **not** used by TradeFirewall for market-data reads or for on-chain execution (execution stays preview-only).
 
-# SoDEX Testnet WebSocket
-SODEX_SPOT_WS_URL=wss://testnet-gw.sodex.dev/ws/spot
-SODEX_PERPS_WS_URL=wss://testnet-gw.sodex.dev/ws/perps
+---
 
-# Optional database
+## Optional database (future)
+
+```env
 DATABASE_URL=
 ```
 
@@ -1345,7 +1349,36 @@ flowchart TD
 
 ---
 
-## Quality Checklist
+## Quality checklist (submission status)
+
+Honest completion status for the current wave:
+
+- [x] Landing page
+- [x] Trade Risk Engine UI
+- [x] Dashboard UI
+- [x] Rule-based explanation engine
+- [x] Confirmation gate
+- [x] SoSoValue live integration (OpenAPI; requires `SOSOVALUE_API_KEY` on the server)
+- [x] SoDEX live integration (public REST; testnet by default via `SODEX_USE_TESTNET`)
+- [x] Live risk reports (score requires successful live responses from **both** providers)
+- [x] PDF / print export (browser print dialog from generated HTML)
+- [ ] Final demo video
+
+### Demo screenshots
+
+Replace the placeholder PNGs under `docs/screenshots/` with real captures before final submission. Current files document the intended shots:
+
+| File | What to capture |
+| --- | --- |
+| ![Trade Risk Engine](./docs/screenshots/trade-risk-engine.png) | Full Trade Risk Engine layout with form and results |
+| ![Live data status](./docs/screenshots/live-data-status.png) | API status row + live market snapshot + data sources panel |
+| ![SoDEX orderbook / liquidity](./docs/screenshots/sodex-orderbook.png) | SoDEX snapshot (bid/ask/spread/volume) after an analysis |
+| ![Generated risk report](./docs/screenshots/risk-report.png) | Risk score, factors, explanation, and data sources block |
+| ![Dashboard](./docs/screenshots/dashboard-reports.png) | Dashboard with metrics from saved real reports |
+
+---
+
+## Quality checklist (detailed engineering)
 
 Before submission:
 
