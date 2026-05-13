@@ -492,6 +492,8 @@ type RiskReport = {
 
 SoSoValue is used as the market intelligence layer.
 
+**Symbol coverage:** the engine resolves the user symbol against `GET /currencies`. If a ticker is listed on SoDEX but not in SoSoValue's currency list, analysis fails by design so we never fabricate intelligence data.
+
 TradeFirewall uses SoSoValue for:
 
 - Market summary
