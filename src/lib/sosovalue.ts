@@ -278,25 +278,44 @@ class SoSoValueAPI {
       'GET /news/search'
     );
 
-    const snap = this.unwrap<MarketSnapshot>(snapRaw);
-    const klinesUnwrapped = this.unwrap<KlineRow[] | { list?: KlineRow[] }>(klinesRaw);
+    const snapPayload = this.unwrap<MarketSnapshot | null>(snapRaw);
+    if (!snapPayload || typeof snapPayload !== 'object') {
+      throw new Error('SoSoValue returned no market snapshot data for this currency');
+    }
+    const snap = snapPayload;
+
+    const klinesUnwrapped = this.unwrap<KlineRow[] | { list?: KlineRow[] } | null>(klinesRaw);
     const klineList: KlineRow[] = Array.isArray(klinesUnwrapped)
       ? klinesUnwrapped
-      : Array.isArray((klinesUnwrapped as { list?: KlineRow[] }).list)
+      : klinesUnwrapped &&
+          typeof klinesUnwrapped === 'object' &&
+          Array.isArray((klinesUnwrapped as { list?: KlineRow[] }).list)
         ? (klinesUnwrapped as { list: KlineRow[] }).list
         : [];
 
-    const info = this.unwrap<{
-      symbol?: string;
-      sector?: { id?: string; name?: string }[];
-    }>(infoRaw);
-
-    const sectorSpot = this.unwrap<{ sector?: { name: string; '24h_change_pct'?: number; marketcap_dom?: number }[] }>(
-      sectorRaw
+    const infoPayload = this.unwrap<{ symbol?: string; sector?: { id?: string; name?: string }[] } | null>(
+      infoRaw
     );
+    const info =
+      infoPayload && typeof infoPayload === 'object'
+        ? infoPayload
+        : { symbol: undefined, sector: [] as { id?: string; name?: string }[] };
 
-    const newsWrapped = this.unwrap<{ list?: NewsItem[]; total?: number }>(newsRaw);
-    const newsList = newsWrapped?.list || [];
+    const sectorPayload = this.unwrap<{
+      sector?: { name: string; '24h_change_pct'?: number; marketcap_dom?: number }[];
+    } | null>(sectorRaw);
+    const sectorList =
+      sectorPayload &&
+      typeof sectorPayload === 'object' &&
+      Array.isArray(sectorPayload.sector)
+        ? sectorPayload.sector
+        : [];
+
+    const newsWrapped = this.unwrap<{ list?: NewsItem[]; total?: number } | null>(newsRaw);
+    const newsList =
+      newsWrapped && typeof newsWrapped === 'object' && Array.isArray(newsWrapped.list)
+        ? newsWrapped.list
+        : [];
 
     const price = this.num(snap.price);
     const change24h = this.num(snap.change_pct_24h);
@@ -354,7 +373,10 @@ class SoSoValueAPI {
       symbol: symbol.toUpperCase(),
       sentiment,
       score,
-      newsCount: newsWrapped?.total ?? newsList.length,
+      newsCount:
+        newsWrapped && typeof newsWrapped === 'object' && typeof newsWrapped.total === 'number'
+          ? newsWrapped.total
+          : newsList.length,
       recentHeadlines: headlines,
       sentimentSources: ['GET /news/search'],
     };
@@ -383,9 +405,7 @@ class SoSoValueAPI {
     };
 
     const primarySector = info.sector?.[0]?.name || 'unknown';
-    const sectorMatch = (sectorSpot.sector || []).find(
-      (s) => s.name?.toLowerCase() === primarySector.toLowerCase()
-    );
+    const sectorMatch = sectorList.find((s) => s.name?.toLowerCase() === primarySector.toLowerCase());
     const sectorPerformance = this.num(sectorMatch?.['24h_change_pct']) * 100;
     const sectorTrend: SoSoSectorData['sectorTrend'] =
       sectorPerformance > 0.5 ? 'bullish' : sectorPerformance < -0.5 ? 'bearish' : 'neutral';
@@ -396,7 +416,7 @@ class SoSoValueAPI {
       sectorPerformance,
       sectorTrend,
       relativeStrength: Math.max(0, Math.min(100, 50 + sectorPerformance * 5)),
-      sectorLeaders: (sectorSpot.sector || [])
+      sectorLeaders: sectorList
         .slice(0, 5)
         .map((s) => s.name)
         .filter(Boolean),

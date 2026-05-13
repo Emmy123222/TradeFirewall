@@ -70,45 +70,100 @@ export async function POST(request: NextRequest) {
     
     // Handle SoDEX market data errors
     if (error instanceof Error) {
-      if (error.message.includes('Unable to fetch SoDEX')) {
+      const msg = error.message;
+
+      if (msg.includes('SoSoValue API error')) {
         return NextResponse.json(
-          { 
-            error: 'Unable to fetch SoDEX market data',
-            errorType: 'SODEX_ERROR',
-            suggestion: 'Check SoDEX API endpoints configuration'
+          {
+            error: msg,
+            errorType: 'SOSOVALUE_API_ERROR',
+            suggestion: 'Check API key tier, rate limits, and SoSoValue status.',
           },
-          { status: 503 }
+          { status: 502 }
         );
       }
-      
-      if (error.message.includes('Symbol') && error.message.includes('not found')) {
+
+      if (msg.includes('SoSoValue HTTP')) {
         return NextResponse.json(
-          { 
-            error: error.message,
-            errorType: 'SYMBOL_NOT_FOUND',
-            suggestion: 'Verify the symbol exists on SoDEX exchange'
+          {
+            error: msg,
+            errorType: 'SOSOVALUE_HTTP_ERROR',
+            suggestion: 'Verify SOSOVALUE_API_KEY and network access to openapi.sosovalue.com.',
+          },
+          { status: 502 }
+        );
+      }
+
+      if (msg.includes('not found in SoSoValue') || msg.includes('Currency ') && msg.includes('not found')) {
+        return NextResponse.json(
+          {
+            error: msg,
+            errorType: 'SYMBOL_NOT_FOUND_SOSOVALUE',
+            suggestion: 'Pick a symbol that appears in SoSoValue GET /currencies (often majors like BTC, ETH).',
           },
           { status: 404 }
         );
       }
-      
-      if (error.message.includes('Cannot calculate risk score')) {
+
+      if (msg.includes('Unable to fetch SoDEX') || msg.includes('SoDEX HTTP') || msg.includes('SoDEX error')) {
         return NextResponse.json(
-          { 
-            error: error.message,
-            errorType: 'INSUFFICIENT_DATA',
-            suggestion: 'Both SoSoValue and SoDEX APIs are unavailable'
+          {
+            error: msg,
+            errorType: 'SODEX_ERROR',
+            suggestion: 'Check SODEX_USE_TESTNET and spot URL in .env.local',
           },
           { status: 503 }
         );
       }
+
+      if (msg.includes('SoDEX') || msg.includes('orderbook') || msg.includes('slippage') || msg.includes('liquidity')) {
+        return NextResponse.json(
+          {
+            error: msg,
+            errorType: 'SODEX_MARKET_ERROR',
+            suggestion: 'Try a smaller amount, another symbol, or confirm testnet order book has bid/ask.',
+          },
+          { status: 503 }
+        );
+      }
+
+      if (msg.includes('Symbol') && msg.includes('not found')) {
+        return NextResponse.json(
+          {
+            error: msg,
+            errorType: 'SYMBOL_NOT_FOUND',
+            suggestion: 'Verify the symbol exists on SoDEX exchange',
+          },
+          { status: 404 }
+        );
+      }
+
+      if (msg.includes('Cannot calculate risk score')) {
+        return NextResponse.json(
+          {
+            error: msg,
+            errorType: 'INSUFFICIENT_DATA',
+            suggestion: 'Both SoSoValue and SoDEX APIs are unavailable',
+          },
+          { status: 503 }
+        );
+      }
+
+      return NextResponse.json(
+        {
+          error: msg,
+          errorType: 'ANALYSIS_ERROR',
+          suggestion: 'See server terminal for full stack trace.',
+        },
+        { status: 500 }
+      );
     }
-    
+
     return NextResponse.json(
-      { 
+      {
         error: 'Risk analysis failed',
         errorType: 'ANALYSIS_ERROR',
-        suggestion: 'Please try again or contact support'
+        suggestion: 'Please try again or contact support',
       },
       { status: 500 }
     );
