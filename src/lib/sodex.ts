@@ -404,13 +404,30 @@ class SoDEXAPI {
     return rows.some((s) => String(s.name ?? s.symbol ?? '') === sodexSymbol);
   }
 
-  async estimateSlippageFromOrderbook(symbol: string, side: 'BUY' | 'SELL', amount: number): Promise<number> {
+  /**
+   * Walk the book in **base asset units**. `notionalUsd` is the trade size in USD;
+   * `referencePriceUsdPerBase` is a mid/last price in USD per 1 base (e.g. BTC).
+   */
+  async estimateSlippageFromOrderbook(
+    symbol: string,
+    side: 'BUY' | 'SELL',
+    notionalUsd: number,
+    referencePriceUsdPerBase: number
+  ): Promise<number> {
+    if (!Number.isFinite(notionalUsd) || notionalUsd <= 0) {
+      throw new Error('Invalid trade notional for slippage estimate');
+    }
+    if (!Number.isFinite(referencePriceUsdPerBase) || referencePriceUsdPerBase <= 0) {
+      throw new Error('Invalid reference price for slippage estimate');
+    }
+    const targetBaseQty = notionalUsd / referencePriceUsdPerBase;
+
     const orderbook = await this.getSpotOrderbook(symbol, 100);
     const orders = side === 'BUY' ? orderbook.asks : orderbook.bids;
     if (!orders.length) {
       throw new Error('SoDEX orderbook side is empty; cannot estimate slippage');
     }
-    let totalVolume = 0;
+    let totalBaseFilled = 0;
     let weightedPrice = 0;
     let firstPrice = 0;
     for (const order of orders) {
@@ -418,22 +435,22 @@ class SoDEXAPI {
       const quantity = parseFloat(order.quantity);
       if (!Number.isFinite(price) || !Number.isFinite(quantity) || price <= 0) continue;
       if (firstPrice === 0) firstPrice = price;
-      if (totalVolume + quantity >= amount) {
-        const remaining = amount - totalVolume;
+      if (totalBaseFilled + quantity >= targetBaseQty) {
+        const remaining = targetBaseQty - totalBaseFilled;
         weightedPrice += price * remaining;
-        totalVolume = amount;
+        totalBaseFilled = targetBaseQty;
         break;
       }
       weightedPrice += price * quantity;
-      totalVolume += quantity;
+      totalBaseFilled += quantity;
     }
-    if (totalVolume < amount) {
+    if (totalBaseFilled < targetBaseQty) {
       throw new Error('Insufficient visible book depth to estimate slippage for this size');
     }
-    if (firstPrice <= 0 || totalVolume <= 0) {
+    if (firstPrice <= 0 || totalBaseFilled <= 0) {
       throw new Error('Invalid SoDEX book data for slippage');
     }
-    const avgPrice = weightedPrice / totalVolume;
+    const avgPrice = weightedPrice / totalBaseFilled;
     return Math.min(Math.abs(avgPrice - firstPrice) / firstPrice, 0.5);
   }
 
@@ -512,16 +529,21 @@ class SoDEXAPI {
       throw new Error('SoDEX ticker price invalid for execution preview');
     }
     const liquidityAnalysis = await this.analyzeLiquidity(symbol);
-    const slippage = await this.estimateSlippageFromOrderbook(symbol, side, amount);
+    const slippage = await this.estimateSlippageFromOrderbook(symbol, side, amount, currentPrice);
     const fees = await this.estimateFeesIfAvailable(symbol);
     const priceImpact = slippage * 0.5;
-    const volume24h = parseFloat(ticker.volume);
+    const volume24hBase = parseFloat(ticker.volume);
+    const quoteVol24h = parseFloat(ticker.quoteVolume);
     const liquidityRatio =
       amount > 0 && Number.isFinite(liquidityAnalysis.marketDepth)
         ? liquidityAnalysis.marketDepth / amount
         : 0;
     const volumeRatio =
-      amount > 0 && Number.isFinite(volume24h) ? volume24h / amount : 0;
+      amount > 0 && Number.isFinite(quoteVol24h) && quoteVol24h > 0
+        ? amount / quoteVol24h
+        : amount > 0 && Number.isFinite(volume24hBase) && volume24hBase > 0
+          ? amount / (volume24hBase * currentPrice)
+          : 0;
     const executionProbability = Math.min(
       0.95,
       Math.max(0, (liquidityRatio * 0.3 + volumeRatio * 0.7) * 0.1)
@@ -529,8 +551,8 @@ class SoDEXAPI {
     const warnings: string[] = [];
     if (slippage > 0.02) warnings.push('High slippage expected');
     if (executionProbability < 0.8) warnings.push('Low execution probability');
-    if (Number.isFinite(volume24h) && amount > volume24h * 0.1) {
-      warnings.push('Large order relative to visible 24h volume');
+    if (Number.isFinite(quoteVol24h) && quoteVol24h > 0 && amount > quoteVol24h * 0.1) {
+      warnings.push('Large order relative to 24h quote volume');
     }
     if (liquidityAnalysis.spreadPercent > 0.5) warnings.push('Wide bid-ask spread');
     if (liquidityAnalysis.marketDepth < amount * 2) warnings.push('Thin depth near mid price');
