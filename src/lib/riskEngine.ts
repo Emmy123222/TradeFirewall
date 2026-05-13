@@ -1,4 +1,4 @@
-// Risk scoring engine for trade analysis - Real data integration
+// Risk scoring engine for trade analysis — live SoSoValue + SoDEX only (no mock payloads)
 import { sosoValueAPI, APIConnectionError } from './sosovalue';
 import { sodexAPI } from './sodex';
 
@@ -14,6 +14,30 @@ export interface TradeInput {
   holdingPeriod: HoldingPeriod;
   riskProfile: RiskProfile;
   notes?: string;
+}
+
+export interface DataSourcesReport {
+  /** Human-readable lines for PDF/UI */
+  lines: string[];
+  lastUpdatedDisplay: string;
+  lastUpdatedIso: string;
+  sosoValue: {
+    status: 'connected' | 'error';
+    live: boolean;
+    lastUpdatedIso: string;
+    categories: string[];
+    endpoints: string[];
+    errorMessage?: string;
+  };
+  sodex: {
+    status: 'connected' | 'error';
+    live: boolean;
+    lastUpdatedIso: string;
+    network: 'testnet' | 'mainnet';
+    categories: string[];
+    endpoints: string[];
+    errorMessage?: string;
+  };
 }
 
 export interface RiskAnalysis {
@@ -32,86 +56,111 @@ export interface RiskAnalysis {
     execution: number;
     sector: number;
     macro: number;
+    positionSize: number;
+    holdingPeriod: number;
   };
   dataSourcesUsed: string[];
+  dataSourcesReport: DataSourcesReport;
+  /** Values shown in UI as proof of live fetches */
+  liveSnapshot: {
+    sosoPrice: number;
+    sosoChange24hPct: number;
+    sodexLast: string;
+    sodexBid: string;
+    sodexAsk: string;
+    sodexVolume: string;
+    sodexSymbol: string;
+    spreadPercent: number;
+  };
 }
 
 class RiskEngine {
   async analyzeTradeRisk(input: TradeInput): Promise<RiskAnalysis> {
-    const dataSourcesUsed: string[] = [];
-    
+    const dataSourcesUsed: string[] = [
+      'SoSoValue: market snapshot, daily klines, sector spotlight, news search, risk context',
+      'SoDEX: ticker, orderbook, klines, trades, liquidity, execution preview (public REST)',
+    ];
+
     try {
-      // Validate symbol exists on SoDEX first
       const symbolExists = await sodexAPI.validateSymbolExists(input.symbol);
       if (!symbolExists) {
         throw new Error(`Symbol ${input.symbol} not found on SoDEX exchange`);
       }
 
-      // Fetch SoSoValue market intelligence data
-      let sosoData: any = {};
-      let sosoError: string | null = null;
-      
-      try {
-        const [marketSummary, assetTrend, sentiment, volumeData, sectorData, riskContext] = await Promise.all([
-          sosoValueAPI.getSoSoMarketSummary(input.symbol),
-          sosoValueAPI.getSoSoAssetTrend(input.symbol),
-          sosoValueAPI.getSoSoNewsSentiment(input.symbol),
-          sosoValueAPI.getSoSoVolumeData(input.symbol),
-          sosoValueAPI.getSoSoSectorData(input.symbol),
-          sosoValueAPI.getSoSoRiskContext(input.symbol)
-        ]);
-        
-        sosoData = { marketSummary, assetTrend, sentiment, volumeData, sectorData, riskContext };
-        dataSourcesUsed.push('SoSoValue Market Intelligence');
-      } catch (error) {
-        if (error instanceof APIConnectionError) {
-          sosoError = error.message;
-        } else {
-          sosoError = 'SoSoValue market intelligence temporarily unavailable';
-        }
-      }
+      const finishedAt = Date.now();
+      const [sosoMI, sodexMS] = await Promise.all([
+        sosoValueAPI.fetchMarketIntelligence(input.symbol),
+        sodexAPI.fetchMarketMicrostructure(input.symbol, input),
+      ]);
 
-      // Fetch SoDEX market microstructure data
-      let sodexData: any = {};
-      let sodexError: string | null = null;
-      
-      try {
-        const [ticker, orderbook, klines, recentTrades, executionPreview, liquidityAnalysis] = await Promise.all([
-          sodexAPI.getSpotTicker(input.symbol),
-          sodexAPI.getSpotOrderbook(input.symbol, 100),
-          sodexAPI.getSpotKlines(input.symbol, '1h', 24),
-          sodexAPI.getSpotTrades(input.symbol, 100),
-          sodexAPI.prepareExecutionPreview(input),
-          sodexAPI.analyzeLiquidity(input.symbol)
-        ]);
-        
-        sodexData = { ticker, orderbook, klines, recentTrades, executionPreview, liquidityAnalysis };
-        dataSourcesUsed.push('SoDEX Market Data');
-      } catch (error) {
-        sodexError = 'Unable to fetch SoDEX market data';
-      }
+      const sosoData = {
+        marketSummary: sosoMI.marketSummary,
+        assetTrend: sosoMI.assetTrend,
+        sentiment: sosoMI.sentiment,
+        volumeData: sosoMI.volumeData,
+        sectorData: sosoMI.sectorData,
+        riskContext: sosoMI.riskContext,
+      };
 
-      // If both APIs fail, we cannot calculate risk
-      if (sosoError && sodexError) {
-        throw new Error(`Cannot calculate risk score: ${sosoError}. ${sodexError}`);
-      }
+      const sodexData = {
+        ticker: sodexMS.ticker,
+        orderbook: sodexMS.orderbook,
+        klines: sodexMS.klines,
+        recentTrades: sodexMS.recentTrades,
+        executionPreview: sodexMS.executionPreview,
+        liquidityAnalysis: sodexMS.liquidityAnalysis,
+      };
 
-      // Calculate risk factors using available data
+      const lastUpdatedIso = new Date(finishedAt).toISOString();
+      const lastUpdatedDisplay = new Date(finishedAt).toLocaleString(undefined, {
+        dateStyle: 'short',
+        timeStyle: 'short',
+      });
+
+      const dataSourcesReport: DataSourcesReport = {
+        lines: [
+          'SoSoValue: market intelligence (snapshot, trend/volume from daily klines), sentiment (news search), sector, risk context',
+          'SoDEX: ticker, orderbook, klines, recent trades, liquidity/spread, execution preview (slippage from book walk)',
+          `Last updated: ${lastUpdatedDisplay}`,
+        ],
+        lastUpdatedDisplay,
+        lastUpdatedIso,
+        sosoValue: {
+          status: 'connected',
+          live: true,
+          lastUpdatedIso,
+          categories: [
+            'Market snapshot',
+            'Trend & momentum (1d klines)',
+            'Volume context',
+            'News sentiment',
+            'Sector',
+            'Risk context',
+          ],
+          endpoints: sosoMI.meta.endpoints,
+        },
+        sodex: {
+          status: 'connected',
+          live: true,
+          lastUpdatedIso,
+          network: sodexMS.meta.network,
+          categories: ['Ticker', 'Orderbook', 'Klines', 'Trades', 'Liquidity', 'Execution preview'],
+          endpoints: sodexMS.meta.endpoints,
+        },
+      };
+
       const riskFactors = this.calculateRiskFactors(input, sosoData, sodexData);
-      
-      // Combine risk factors with weights
       const riskScore = this.combineRiskFactors(riskFactors);
-      
-      // Determine decision based on risk score and profile
       const decision = this.determineDecision(riskScore, input.riskProfile);
-      
-      // Generate reasons and recommendations
       const reasons = this.generateReasons(riskFactors, input, sosoData, sodexData);
       const saferAction = this.generateSaferAction(decision, riskScore, input);
       const suggestedPositionSize = this.calculateSaferPositionSize(input.amount, riskScore, input.riskProfile);
-      
-      // Calculate confidence based on data availability and quality
       const confidence = this.calculateConfidence(dataSourcesUsed, sosoData, sodexData);
+
+      const bid = parseFloat(sodexMS.ticker.bidPrice);
+      const ask = parseFloat(sodexMS.ticker.askPrice);
+      const mid = bid > 0 && ask > 0 ? (bid + ask) / 2 : 0;
+      const spreadPercent = mid > 0 && ask >= bid ? ((ask - bid) / mid) * 100 : 0;
 
       return {
         riskScore,
@@ -121,7 +170,18 @@ class RiskEngine {
         suggestedPositionSize,
         confidence,
         marketFactors: riskFactors,
-        dataSourcesUsed
+        dataSourcesUsed,
+        dataSourcesReport,
+        liveSnapshot: {
+          sosoPrice: sosoMI.marketSummary.price,
+          sosoChange24hPct: sosoMI.marketSummary.change24h,
+          sodexLast: sodexMS.ticker.lastPrice,
+          sodexBid: sodexMS.ticker.bidPrice,
+          sodexAsk: sodexMS.ticker.askPrice,
+          sodexVolume: sodexMS.ticker.volume,
+          sodexSymbol: sodexMS.ticker.symbol,
+          spreadPercent,
+        },
       };
     } catch (error) {
       // Re-throw API connection errors to be handled by the UI
@@ -390,43 +450,48 @@ class RiskEngine {
     return 10;
   }
 
-  private calculateHoldingPeriodRisk(holdingPeriod: HoldingPeriod, volatilityData: any): number {
-    // Shorter periods with high volatility = higher risk
-    const periodRiskMap = {
-      'intraday': 80,
+  private calculateHoldingPeriodRisk(holdingPeriod: HoldingPeriod, volatilityRiskScore: number): number {
+    const periodRiskMap: Record<HoldingPeriod, number> = {
+      intraday: 80,
       '1day': 60,
       '7days': 40,
-      '30days': 20
+      '30days': 20,
     };
 
     const baseRisk = periodRiskMap[holdingPeriod];
-    const volatilityMultiplier = volatilityData.riskLevel === 'extreme' ? 1.5 :
-                                volatilityData.riskLevel === 'high' ? 1.2 :
-                                volatilityData.riskLevel === 'medium' ? 1.0 : 0.8;
+    const volatilityMultiplier =
+      volatilityRiskScore > 75 ? 1.45 : volatilityRiskScore > 55 ? 1.2 : volatilityRiskScore > 40 ? 1.0 : 0.85;
 
-    return Math.min(100, baseRisk * volatilityMultiplier);
+    return Math.min(100, Math.round(baseRisk * volatilityMultiplier));
   }
 
   private combineRiskFactors(factors: Record<string, number>): number {
-    // Weighted combination of risk factors
-    const weights = {
-      volatility: 0.25,
-      sentiment: 0.15,
-      volume: 0.15,
-      trend: 0.20,
-      liquidity: 0.10,
-      positionSize: 0.10,
-      holdingPeriod: 0.05
+    const weights: Record<string, number> = {
+      volatility: 0.18,
+      sentiment: 0.1,
+      volume: 0.1,
+      trend: 0.15,
+      liquidity: 0.1,
+      execution: 0.1,
+      sector: 0.07,
+      macro: 0.05,
+      positionSize: 0.1,
+      holdingPeriod: 0.05,
     };
 
     let weightedSum = 0;
     let totalWeight = 0;
 
     Object.entries(factors).forEach(([factor, value]) => {
-      const weight = weights[factor as keyof typeof weights] || 0;
+      const weight = weights[factor] ?? 0;
+      if (weight <= 0) return;
       weightedSum += value * weight;
       totalWeight += weight;
     });
+
+    if (totalWeight <= 0) {
+      throw new Error('Risk engine has no weighted factors to combine');
+    }
 
     return Math.round(weightedSum / totalWeight);
   }
@@ -522,38 +587,26 @@ class RiskEngine {
     return `Consider reducing to $${Math.round(saferAmount).toLocaleString()}`;
   }
 
-  private calculateConfidence(dataSourcesUsed: string[], sosoData?: any, sodexData?: any): number {
-    // Base confidence starts at 0.5
-    let confidence = 0.5;
-    
-    // Increase confidence based on available data sources
-    if (dataSourcesUsed.includes('SoSoValue Market Intelligence')) {
-      confidence += 0.2;
-    }
-    
-    if (dataSourcesUsed.includes('SoDEX Market Data')) {
-      confidence += 0.2;
-    }
-    
-    // Increase confidence based on data quality
+  private calculateConfidence(_dataSourcesUsed: string[], sosoData?: any, sodexData?: any): number {
+    let confidence = 0.55;
+
     if (sodexData?.liquidityAnalysis?.marketDepth > 0) {
-      confidence += 0.1;
+      confidence += 0.12;
     }
-    
-    if (sosoData?.sentiment?.newsCount > 10) {
+
+    if (sosoData?.sentiment && sosoData.sentiment.newsCount > 0) {
+      confidence += 0.08;
+    }
+
+    if (sodexData?.ticker?.volume && parseFloat(sodexData.ticker.volume) > 0) {
       confidence += 0.05;
     }
-    
-    if (sodexData?.ticker?.volume && parseFloat(sodexData.ticker.volume) > 1000) {
-      confidence += 0.05;
-    }
-    
-    // Decrease confidence for warnings
+
     if (sodexData?.executionPreview?.warnings?.length > 0) {
-      confidence -= sodexData.executionPreview.warnings.length * 0.05;
+      confidence -= sodexData.executionPreview.warnings.length * 0.04;
     }
-    
-    return Math.max(0.3, Math.min(1.0, confidence));
+
+    return Math.max(0.35, Math.min(1.0, confidence));
   }
 }
 
