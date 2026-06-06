@@ -405,60 +405,6 @@ class SoDEXAPI {
   }
 
   /**
-   * Walk the book in **base asset units**. `notionalUsd` is the trade size in USD;
-   * `referencePriceUsdPerBase` is a mid/last price in USD per 1 base (e.g. BTC).
-   * Testnet often has no asks or no bids — then depth walk is skipped (slippage 0, walkSideEmpty).
-   */
-  async estimateSlippageFromOrderbook(
-    symbol: string,
-    side: 'BUY' | 'SELL',
-    notionalUsd: number,
-    referencePriceUsdPerBase: number
-  ): Promise<{ slippage: number; walkSideEmpty: boolean }> {
-    if (!Number.isFinite(notionalUsd) || notionalUsd <= 0) {
-      throw new Error('Invalid trade notional for slippage estimate');
-    }
-    if (!Number.isFinite(referencePriceUsdPerBase) || referencePriceUsdPerBase <= 0) {
-      throw new Error('Invalid reference price for slippage estimate');
-    }
-    const targetBaseQty = notionalUsd / referencePriceUsdPerBase;
-
-    const orderbook = await this.getSpotOrderbook(symbol, 100);
-    const orders = side === 'BUY' ? orderbook.asks : orderbook.bids;
-    if (!orders.length) {
-      return { slippage: 0, walkSideEmpty: true };
-    }
-    let totalBaseFilled = 0;
-    let weightedPrice = 0;
-    let firstPrice = 0;
-    for (const order of orders) {
-      const price = parseFloat(order.price);
-      const quantity = parseFloat(order.quantity);
-      if (!Number.isFinite(price) || !Number.isFinite(quantity) || price <= 0) continue;
-      if (firstPrice === 0) firstPrice = price;
-      if (totalBaseFilled + quantity >= targetBaseQty) {
-        const remaining = targetBaseQty - totalBaseFilled;
-        weightedPrice += price * remaining;
-        totalBaseFilled = targetBaseQty;
-        break;
-      }
-      weightedPrice += price * quantity;
-      totalBaseFilled += quantity;
-    }
-    if (firstPrice <= 0 || totalBaseFilled <= 0) {
-      return { slippage: 0, walkSideEmpty: true };
-    }
-    if (totalBaseFilled < targetBaseQty) {
-      throw new Error('Insufficient visible book depth to estimate slippage for this size');
-    }
-    const avgPrice = weightedPrice / totalBaseFilled;
-    return {
-      slippage: Math.min(Math.abs(avgPrice - firstPrice) / firstPrice, 0.5),
-      walkSideEmpty: false,
-    };
-  }
-
-  /**
    * Top-of-book: bookTicker first, then orderbook top level, then last trade price (illiquid testnet).
    */
   private async resolveTopOfBookPrices(
@@ -504,7 +450,11 @@ class SoDEXAPI {
     return { bidPrice: bid, askPrice: ask };
   }
 
-  async analyzeLiquidity(symbol: string): Promise<{
+  private async analyzeLiquidityFromData(
+    symbol: string,
+    orderbook: SodexOrderbook,
+    bookTicker: SodexBookTicker
+  ): Promise<{
     totalBidLiquidity: number;
     totalAskLiquidity: number;
     spreadPercent: number;
@@ -512,8 +462,6 @@ class SoDEXAPI {
     bidLevels: number;
     askLevels: number;
   }> {
-    const orderbook = await this.getSpotOrderbook(symbol);
-    const bookTicker = await this.getSpotBookTicker(symbol);
     const { bidPrice, askPrice } = await this.resolveTopOfBookPrices(symbol, orderbook, bookTicker);
     const spread = askPrice - bidPrice;
     const mid = (bidPrice + askPrice) / 2;
@@ -558,47 +506,67 @@ class SoDEXAPI {
     return this.getMarketFees(symbol);
   }
 
-  async prepareExecutionPreview(tradeInput: {
-    symbol: string;
-    action: string;
-    amount: number;
-  }): Promise<SodexExecutionPreview> {
+  private estimateSlippageFromBook(
+    orders: SodexOrderbookEntry[],
+    targetBaseQty: number
+  ): { slippage: number; walkSideEmpty: boolean } {
+    if (!orders.length) return { slippage: 0, walkSideEmpty: true };
+    let totalBaseFilled = 0;
+    let weightedPrice = 0;
+    let firstPrice = 0;
+    for (const order of orders) {
+      const price = parseFloat(order.price);
+      const quantity = parseFloat(order.quantity);
+      if (!Number.isFinite(price) || !Number.isFinite(quantity) || price <= 0) continue;
+      if (firstPrice === 0) firstPrice = price;
+      if (totalBaseFilled + quantity >= targetBaseQty) {
+        weightedPrice += price * (targetBaseQty - totalBaseFilled);
+        totalBaseFilled = targetBaseQty;
+        break;
+      }
+      weightedPrice += price * quantity;
+      totalBaseFilled += quantity;
+    }
+    if (firstPrice <= 0 || totalBaseFilled <= 0) return { slippage: 0, walkSideEmpty: true };
+    if (totalBaseFilled < targetBaseQty) {
+      throw new Error('Insufficient visible book depth to estimate slippage for this size');
+    }
+    const avgPrice = weightedPrice / totalBaseFilled;
+    return { slippage: Math.min(Math.abs(avgPrice - firstPrice) / firstPrice, 0.5), walkSideEmpty: false };
+  }
+
+  private async buildExecutionPreviewFromData(
+    tradeInput: { symbol: string; action: string; amount: number },
+    ticker: SodexTicker,
+    orderbook: SodexOrderbook,
+    bookTicker: SodexBookTicker,
+    liquidityAnalysis: Awaited<ReturnType<SoDEXAPI['analyzeLiquidityFromData']>>,
+    fees: number
+  ): Promise<SodexExecutionPreview> {
     const { symbol, action, amount } = tradeInput;
     const side = action.toUpperCase() as 'BUY' | 'SELL';
-    const exists = await this.validateSymbolExists(symbol);
-    if (!exists) {
-      throw new Error(`Symbol ${symbol} not found on SoDEX markets`);
-    }
-    const ticker = await this.getSpotTicker(symbol);
     const currentPrice = parseFloat(ticker.lastPrice);
     if (!Number.isFinite(currentPrice) || currentPrice <= 0) {
       throw new Error('SoDEX ticker price invalid for execution preview');
     }
-    const liquidityAnalysis = await this.analyzeLiquidity(symbol);
-    const { slippage, walkSideEmpty } = await this.estimateSlippageFromOrderbook(
-      symbol,
-      side,
-      amount,
-      currentPrice
-    );
-    const fees = await this.estimateFeesIfAvailable(symbol);
+    const { bidPrice, askPrice } = await this.resolveTopOfBookPrices(symbol, orderbook, bookTicker);
+    const mid = (bidPrice + askPrice) / 2;
+    const refPrice = mid > 0 ? mid : currentPrice;
+    const targetBaseQty = refPrice > 0 ? amount / refPrice : 0;
+    const orders = side === 'BUY' ? orderbook.asks : orderbook.bids;
+    const { slippage, walkSideEmpty } = targetBaseQty > 0
+      ? this.estimateSlippageFromBook(orders, targetBaseQty)
+      : { slippage: 0, walkSideEmpty: orders.length === 0 };
+
     const priceImpact = slippage * 0.5;
-    const volume24hBase = parseFloat(ticker.volume);
     const quoteVol24h = parseFloat(ticker.quoteVolume);
+    const volume24hBase = parseFloat(ticker.volume);
     const liquidityRatio =
       amount > 0 && Number.isFinite(liquidityAnalysis.marketDepth)
         ? liquidityAnalysis.marketDepth / amount
         : 0;
-    const volumeRatio =
-      amount > 0 && Number.isFinite(quoteVol24h) && quoteVol24h > 0
-        ? amount / quoteVol24h
-        : amount > 0 && Number.isFinite(volume24hBase) && volume24hBase > 0
-          ? amount / (volume24hBase * currentPrice)
-          : 0;
-    const executionProbability = Math.min(
-      0.95,
-      Math.max(0, (liquidityRatio * 0.3 + volumeRatio * 0.7) * 0.1)
-    );
+    // Higher liquidityRatio = easier execution; cap at 0.95
+    const executionProbability = Math.min(0.95, Math.max(0, Math.log1p(liquidityRatio) / Math.log1p(20)));
     const warnings: string[] = [];
     if (walkSideEmpty) {
       warnings.push(
@@ -606,9 +574,11 @@ class SoDEXAPI {
       );
     }
     if (slippage > 0.02) warnings.push('High slippage expected');
-    if (executionProbability < 0.8) warnings.push('Low execution probability');
+    if (executionProbability < 0.5) warnings.push('Low execution probability');
     if (Number.isFinite(quoteVol24h) && quoteVol24h > 0 && amount > quoteVol24h * 0.1) {
       warnings.push('Large order relative to 24h quote volume');
+    } else if (Number.isFinite(volume24hBase) && volume24hBase > 0 && currentPrice > 0 && amount > volume24hBase * currentPrice * 0.1) {
+      warnings.push('Large order relative to 24h base volume');
     }
     if (liquidityAnalysis.spreadPercent > 0.5) warnings.push('Wide bid-ask spread');
     if (liquidityAnalysis.marketDepth < amount * 2) warnings.push('Thin depth near mid price');
@@ -633,7 +603,25 @@ class SoDEXAPI {
     };
   }
 
-  /** One coordinated fetch for the risk engine + UI proof. */
+  async prepareExecutionPreview(tradeInput: {
+    symbol: string;
+    action: string;
+    amount: number;
+  }): Promise<SodexExecutionPreview> {
+    const { symbol } = tradeInput;
+    const exists = await this.validateSymbolExists(symbol);
+    if (!exists) throw new Error(`Symbol ${symbol} not found on SoDEX markets`);
+    const [ticker, orderbook, bookTicker, fees] = await Promise.all([
+      this.getSpotTicker(symbol),
+      this.getSpotOrderbook(symbol, 100),
+      this.getSpotBookTicker(symbol),
+      this.estimateFeesIfAvailable(symbol),
+    ]);
+    const liquidityAnalysis = await this.analyzeLiquidityFromData(symbol, orderbook, bookTicker);
+    return this.buildExecutionPreviewFromData(tradeInput, ticker, orderbook, bookTicker, liquidityAnalysis, fees);
+  }
+
+  /** One coordinated fetch — each endpoint called exactly once. */
   async fetchMarketMicrostructure(
     symbol: string,
     tradeInput: { symbol: string; action: string; amount: number }
@@ -648,28 +636,26 @@ class SoDEXAPI {
       `${this.spotBaseUrl}${basePath}/klines`,
       `${this.spotBaseUrl}${basePath}/trades`,
     ];
-    const [ticker, orderbook, klines, recentTrades] = await Promise.all([
+    const [ticker, bookTicker, orderbook, klines, recentTrades, fees] = await Promise.all([
       this.getSpotTicker(symbol),
+      this.getSpotBookTicker(symbol),
       this.getSpotOrderbook(symbol, 100),
       this.getSpotKlines(symbol, '1h', 48),
       this.getSpotTrades(symbol, 100),
+      this.estimateFeesIfAvailable(symbol),
     ]);
-    const executionPreview = await this.prepareExecutionPreview(tradeInput);
-    const liquidityAnalysis = await this.analyzeLiquidity(symbol);
+    const liquidityAnalysis = await this.analyzeLiquidityFromData(symbol, orderbook, bookTicker);
+    const executionPreview = await this.buildExecutionPreviewFromData(
+      tradeInput, ticker, orderbook, bookTicker, liquidityAnalysis, fees
+    );
     return {
       ticker,
       orderbook,
       klines,
       recentTrades,
       executionPreview,
-      liquidityAnalysis: {
-        ...liquidityAnalysis,
-      },
-      meta: {
-        endpoints,
-        network: this.network,
-        fetchedAtMs: t0,
-      },
+      liquidityAnalysis,
+      meta: { endpoints, network: this.network, fetchedAtMs: t0 },
     };
   }
 }

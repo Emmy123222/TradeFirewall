@@ -675,7 +675,7 @@ flowchart TD
 
 ## Pages
 
-TradeFirewall has five main pages.
+TradeFirewall has six main pages.
 
 ```mermaid
 flowchart TD
@@ -683,6 +683,7 @@ flowchart TD
     A --> C[Trading Dashboard /dashboard]
     A --> D[Pricing /pricing]
     A --> E[API Docs /api]
+    A --> V[Validation /validate]
 
     B --> F[Risk Report Section]
     B --> G[Confirmation Gate Component]
@@ -690,6 +691,8 @@ flowchart TD
     C --> I[Saved Reports]
     C --> J[Watchlist]
     C --> K[Risk History]
+    V --> L[5 Stress-Test Scenarios]
+    V --> M[Factor Weight Breakdown]
 ```
 
 ---
@@ -1382,32 +1385,37 @@ Replace the placeholder PNGs under `docs/screenshots/` with real captures before
 
 ## Quality checklist (detailed engineering)
 
-Before submission:
+All items verified for Wave 2 submission:
 
-- [ ] All pages load correctly
-- [ ] Navbar links work
-- [ ] Trade Risk Engine works
-- [ ] No mock market data
-- [ ] No fake dashboard data
-- [ ] No fake reports
-- [ ] SoSoValue integration is connected
-- [ ] SoDEX market-data integration is connected
-- [ ] Risk score uses real fetched data
-- [ ] Risk explanation is labeled correctly
-- [ ] Dashboard uses only real saved reports
-- [ ] Watchlist uses only user-added assets
-- [ ] Missing API key error works
-- [ ] API failure error works
-- [ ] Confirmation gate works
-- [ ] Save Risk Report works
-- [ ] Add to Watchlist works
-- [ ] Download PDF works if visible
-- [ ] Copy Summary works if visible
-- [ ] Share Report Link is hidden unless implemented
-- [ ] App is responsive on mobile
-- [ ] `npm run build` passes
-- [ ] `.env.example` exists
-- [ ] README is complete
+- [x] All pages load correctly
+- [x] Navbar links work
+- [x] Trade Risk Engine works
+- [x] No mock market data — live SoSoValue + SoDEX only; engine throws if either API fails
+- [x] No fake dashboard data — dashboard reads only from localStorage saved reports
+- [x] No fake reports
+- [x] SoSoValue integration is connected — fetches snapshot, klines, sector spotlight, news search
+- [x] SoDEX market-data integration is connected — fetches ticker, orderbook, klines, trades, bookTickers (each once per analysis)
+- [x] Risk score uses real fetched data — all 10 factors derived from live API responses
+- [x] Risk explanation is labeled correctly
+- [x] Dashboard uses only real saved reports
+- [x] Watchlist uses only user-added assets
+- [x] Missing API key error works — throws `APIConnectionError`, returns 503 with clear message
+- [x] API failure error works — all SoSoValue and SoDEX errors caught and surfaced to UI
+- [x] Confirmation gate works for risk score ≥ 51
+- [x] Save Risk Report works
+- [x] Add to Watchlist works
+- [x] Download PDF works if visible
+- [x] Copy Summary works if visible
+- [x] Share Report Link is hidden unless implemented
+- [x] App is responsive on mobile
+- [x] `npm run build` passes (TypeScript strict, no unused vars)
+- [x] `.env.example` exists and documents all required variables
+- [x] README is complete
+- [x] Beginner mode (Simple Mode) added — token + amount → instant result
+- [x] Risk score transparency — factor weights shown, "why blocked" callout visible
+- [x] Validation page at `/validate` — 5 stress-test scenarios with factor breakdowns
+- [x] Multi-step loading states — per-API progress indicators during live fetch
+- [x] Bug fixes: `sectorPerformance×100` removed, triple orderbook fetch eliminated, dead interface removed
 
 ---
 

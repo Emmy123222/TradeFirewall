@@ -49,17 +49,6 @@ export interface SoSoSectorData {
   sectorLeaders: string[];
 }
 
-export interface SoSoETFOrMacroData {
-  symbol: string;
-  etfExposure?: number;
-  macroFactors: {
-    btcCorrelation: number;
-    ethCorrelation: number;
-    marketCorrelation: number;
-    riskOnOff: 'risk_on' | 'risk_off' | 'neutral';
-  };
-}
-
 export interface SoSoRiskContext {
   symbol: string;
   riskFactors: string[];
@@ -406,7 +395,8 @@ class SoSoValueAPI {
 
     const primarySector = info.sector?.[0]?.name || 'unknown';
     const sectorMatch = sectorList.find((s) => s.name?.toLowerCase() === primarySector.toLowerCase());
-    const sectorPerformance = this.num(sectorMatch?.['24h_change_pct']) * 100;
+    // 24h_change_pct is already a percentage (e.g. 2.5 = 2.5%), no ×100 conversion needed
+    const sectorPerformance = this.num(sectorMatch?.['24h_change_pct']);
     const sectorTrend: SoSoSectorData['sectorTrend'] =
       sectorPerformance > 0.5 ? 'bullish' : sectorPerformance < -0.5 ? 'bearish' : 'neutral';
 

@@ -58,9 +58,21 @@ interface AnalysisResult {
   dataSourcesReport?: RiskAnalysis['dataSourcesReport'];
 }
 
+const LOAD_STEPS = [
+  { id: 'soso', label: 'Fetching SoSoValue market intelligence...' },
+  { id: 'sodex', label: 'Fetching SoDEX orderbook & liquidity...' },
+  { id: 'score', label: 'Computing risk score...' },
+  { id: 'explain', label: 'Generating risk explanation...' },
+];
+
 export default function CheckTradePage() {
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(false);
+  const [loadStep, setLoadStep] = useState(0);
+  const [beginnerMode, setBeginnerMode] = useState(false);
+  const [beginnerSymbol, setBeginnerSymbol] = useState('');
+  const [beginnerAmount, setBeginnerAmount] = useState('');
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
   const [showConfirmation, setShowConfirmation] = useState(false);
   const [executionResult, setExecutionResult] = useState<any>(null);
@@ -85,12 +97,32 @@ export default function CheckTradePage() {
     return () => window.removeEventListener('focus', handleFocus);
   }, []);
 
+  const handleBeginnerSubmit = () => {
+    const sym = beginnerSymbol.trim().toUpperCase();
+    const amt = parseFloat(beginnerAmount);
+    if (!sym || !/^[A-Z]{2,10}$/.test(sym)) {
+      toast.error('Enter a valid symbol (e.g. BTC, ETH, SOL).');
+      return;
+    }
+    if (!amt || amt <= 0) {
+      toast.error('Enter a valid trade amount in USD.');
+      return;
+    }
+    handleTradeSubmit({ symbol: sym, action: 'buy', amount: amt, holdingPeriod: '1day', riskProfile: 'balanced' });
+  };
+
   const handleTradeSubmit = async (tradeInput: TradeInput) => {
     setIsLoading(true);
+    setLoadStep(0);
     setAnalysisResult(null);
     setShowConfirmation(false);
     setExecutionResult(null);
     setCurrentTrade(tradeInput);
+
+    // Advance loading steps on a simple timer so users see progress
+    const stepTimer = setInterval(() => {
+      setLoadStep((s) => (s < LOAD_STEPS.length - 1 ? s + 1 : s));
+    }, 1800);
 
     try {
       const response = await fetch('/api/analyze-trade', {
@@ -146,6 +178,8 @@ export default function CheckTradePage() {
         toast.error('Failed to analyze trade. Please try again.');
       }
     } finally {
+      clearInterval(stepTimer);
+      setLoadStep(LOAD_STEPS.length - 1);
       setIsLoading(false);
     }
   };
@@ -413,25 +447,92 @@ export default function CheckTradePage() {
           
           {/* Page Header - Full Width */}
           <div className="col-span-12">
-            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6 mb-8">
+            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6 mb-6">
               <div>
                 <h1 className="text-3xl font-bold text-text-primary mb-2">Trade Risk Engine</h1>
                 <p className="text-text-secondary max-w-2xl">
-                  Analyze any proposed crypto trade before execution using market data, risk intelligence scoring, and pre-trade safety controls.
+                  Analyze any proposed crypto trade before execution using live market data, risk intelligence scoring, and pre-trade safety controls.
                 </p>
               </div>
-              
               <div className="flex flex-col sm:flex-row gap-4">
                 <Button onClick={handleNewAnalysis} className="btn-primary px-6 py-2">New Analysis</Button>
                 <Button onClick={handleViewPreviousReports} className="btn-secondary px-6 py-2">View Previous Reports</Button>
               </div>
             </div>
+
+            {/* Mode toggle */}
+            <div className="flex items-center gap-3 mb-6">
+              <button
+                onClick={() => { setBeginnerMode(false); setShowAdvanced(false); }}
+                className={`px-4 py-1.5 rounded-full text-sm font-medium border transition-colors ${!beginnerMode ? 'bg-primary text-background border-primary' : 'border-border text-text-secondary hover:text-text-primary'}`}
+              >
+                Advanced
+              </button>
+              <button
+                onClick={() => setBeginnerMode(true)}
+                className={`px-4 py-1.5 rounded-full text-sm font-medium border transition-colors ${beginnerMode ? 'bg-primary text-background border-primary' : 'border-border text-text-secondary hover:text-text-primary'}`}
+              >
+                Simple Mode
+              </button>
+              {beginnerMode && (
+                <span className="text-xs text-text-secondary">New to crypto? Start here — just enter a token and amount.</span>
+              )}
+            </div>
           </div>
 
-          {/* Trade Input Form - Left Column */}
+          {/* Beginner mode form */}
+          {beginnerMode && (
+            <div className="col-span-12 lg:col-span-7">
+              <Card className="terminal-card">
+                <CardHeader>
+                  <CardTitle className="text-lg font-semibold">Quick Risk Check</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-6">
+                  <div className="space-y-1">
+                    <label className="text-sm font-medium text-text-secondary">Step 1 — Which token?</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. BTC, ETH, SOL"
+                      value={beginnerSymbol}
+                      onChange={e => setBeginnerSymbol(e.target.value.toUpperCase())}
+                      className="w-full px-4 py-3 bg-surface border border-border rounded-lg text-text-primary text-lg font-mono focus:outline-none focus:border-primary"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-sm font-medium text-text-secondary">Step 2 — How much? (USD)</label>
+                    <input
+                      type="number"
+                      placeholder="e.g. 1000"
+                      value={beginnerAmount}
+                      onChange={e => setBeginnerAmount(e.target.value)}
+                      className="w-full px-4 py-3 bg-surface border border-border rounded-lg text-text-primary text-lg font-mono focus:outline-none focus:border-primary"
+                    />
+                    <p className="text-xs text-text-secondary">We will check a standard buy for 1 day, balanced profile. Use Advanced mode to customize.</p>
+                  </div>
+                  <Button
+                    onClick={handleBeginnerSubmit}
+                    disabled={isLoading}
+                    className="w-full btn-primary py-3 text-base"
+                  >
+                    {isLoading ? 'Analyzing…' : 'Analyze Risk →'}
+                  </Button>
+                  <button
+                    onClick={() => setBeginnerMode(false)}
+                    className="w-full text-xs text-text-secondary hover:text-primary underline-offset-2 hover:underline"
+                  >
+                    Switch to Advanced mode for full controls
+                  </button>
+                </CardContent>
+              </Card>
+            </div>
+          )}
+
+          {/* Advanced input form */}
+          {!beginnerMode && (
           <div className="col-span-12 lg:col-span-7">
             <TradeInputForm onSubmit={handleTradeSubmit} isLoading={isLoading} />
           </div>
+          )}
 
           {/* Live Trade Preview - Right Column */}
           <div className="col-span-12 lg:col-span-5 space-y-6">
@@ -580,19 +681,44 @@ export default function CheckTradePage() {
           {/* Loading State - Full Width */}
           {isLoading && (
             <div className="col-span-12">
-              <div className="flex flex-col items-center justify-center py-16 space-y-4">
-                <div className="flex items-center space-x-3">
-                  <div className="w-6 h-6 border-2 border-primary/30 border-t-primary rounded-full animate-spin"></div>
-                  <span className="text-lg text-text-primary">Fetching live market data...</span>
-                </div>
-                <div className="text-sm text-text-secondary">Calculating risk score...</div>
-                <div className="text-sm text-text-secondary">Generating risk explanation...</div>
-              </div>
+              <Card className="terminal-card border-primary/20">
+                <CardContent className="py-12">
+                  <div className="max-w-sm mx-auto space-y-6">
+                    <div className="text-center">
+                      <div className="w-10 h-10 border-2 border-primary/30 border-t-primary rounded-full animate-spin mx-auto mb-4"></div>
+                      <p className="text-text-primary font-medium">Running live analysis…</p>
+                      <p className="text-xs text-text-secondary mt-1">Connecting to SoSoValue &amp; SoDEX APIs</p>
+                    </div>
+                    <div className="space-y-3">
+                      {LOAD_STEPS.map((step, i) => (
+                        <div key={step.id} className="flex items-center gap-3">
+                          <div className={`w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 border ${
+                            i < loadStep ? 'bg-success border-success' :
+                            i === loadStep ? 'border-primary bg-primary/10' :
+                            'border-border'
+                          }`}>
+                            {i < loadStep ? (
+                              <span className="text-background text-xs">✓</span>
+                            ) : i === loadStep ? (
+                              <div className="w-2 h-2 bg-primary rounded-full animate-pulse"></div>
+                            ) : null}
+                          </div>
+                          <span className={`text-sm ${
+                            i < loadStep ? 'text-success line-through opacity-60' :
+                            i === loadStep ? 'text-text-primary' :
+                            'text-text-secondary'
+                          }`}>{step.label}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
             </div>
           )}
 
           {/* Risk Score Card - Left */}
-          {analysisResult && !showConfirmation && (
+          {analysisResult && !showConfirmation && (!beginnerMode || showAdvanced) && (
             <div className="col-span-12 lg:col-span-4">
               <RiskScoreCard
                 riskScore={analysisResult.riskAnalysis.riskScore}
@@ -603,7 +729,7 @@ export default function CheckTradePage() {
           )}
 
           {/* Recommended Action - Right */}
-          {analysisResult && !showConfirmation && (
+          {analysisResult && !showConfirmation && (!beginnerMode || showAdvanced) && (
             <div className="col-span-12 lg:col-span-8">
               <Card className="terminal-card">
                 <CardHeader>
@@ -646,18 +772,66 @@ export default function CheckTradePage() {
             </div>
           )}
 
+          {/* Beginner simple result card */}
+          {analysisResult && !showConfirmation && beginnerMode && (
+            <div className="col-span-12">
+              {(() => {
+                const { decision, riskScore, saferAction } = analysisResult.riskAnalysis;
+                const colors: Record<string, string> = {
+                  APPROVE: 'border-success/40 bg-success/5',
+                  CAUTION: 'border-warning/40 bg-warning/5',
+                  REDUCE_OR_WAIT: 'border-orange-risk/40 bg-orange-risk/5',
+                  BLOCK: 'border-danger/40 bg-danger/5',
+                };
+                const textColors: Record<string, string> = {
+                  APPROVE: 'text-success',
+                  CAUTION: 'text-warning',
+                  REDUCE_OR_WAIT: 'text-orange-risk',
+                  BLOCK: 'text-danger',
+                };
+                const labels: Record<string, string> = {
+                  APPROVE: '✅ Safe to Proceed',
+                  CAUTION: '⚠️ Proceed with Caution',
+                  REDUCE_OR_WAIT: '🔻 Reduce Size or Wait',
+                  BLOCK: '🚫 Avoid This Trade',
+                };
+                return (
+                  <Card className={`terminal-card ${colors[decision] ?? ''}`}>
+                    <CardContent className="py-8 text-center space-y-4">
+                      <div className={`text-5xl font-bold ${textColors[decision]}`}>
+                        {riskScore}/100
+                      </div>
+                      <div className={`text-2xl font-semibold ${textColors[decision]}`}>
+                        {labels[decision] ?? decision}
+                      </div>
+                      <p className="text-body max-w-lg mx-auto">{saferAction}</p>
+                      <button
+                        onClick={() => setShowAdvanced((v) => !v)}
+                        className="text-sm text-primary underline-offset-2 hover:underline mt-2"
+                      >
+                        {showAdvanced ? 'Hide full breakdown ▲' : 'See full breakdown ▼'}
+                      </button>
+                    </CardContent>
+                  </Card>
+                );
+              })()}
+            </div>
+          )}
+
           {/* Risk Breakdown - Full Width */}
-          {analysisResult && !showConfirmation && (
+          {analysisResult && !showConfirmation && (!beginnerMode || showAdvanced) && (
             <div className="col-span-12">
               <RiskFactorsList
                 reasons={analysisResult.riskAnalysis.reasons}
                 marketFactors={analysisResult.riskAnalysis.marketFactors}
+                factorWeights={analysisResult.riskAnalysis.factorWeights}
+                decision={analysisResult.riskAnalysis.decision}
               />
             </div>
           )}
 
           {/* Risk Intelligence Explanation - Full Width */}
-          {analysisResult && !showConfirmation && (
+          {analysisResult && !showConfirmation && (!beginnerMode || showAdvanced) && (
             <div className="col-span-12">
               <RiskExplanationBox explanation={analysisResult.riskExplanation} />
             </div>

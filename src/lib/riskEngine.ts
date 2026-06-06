@@ -40,6 +40,19 @@ export interface DataSourcesReport {
   };
 }
 
+export const FACTOR_WEIGHTS: Record<string, number> = {
+  volatility: 0.18,
+  sentiment: 0.10,
+  volume: 0.10,
+  trend: 0.15,
+  liquidity: 0.10,
+  execution: 0.10,
+  sector: 0.07,
+  macro: 0.05,
+  positionSize: 0.10,
+  holdingPeriod: 0.05,
+};
+
 export interface RiskAnalysis {
   riskScore: number; // 0-100
   decision: Decision;
@@ -59,6 +72,7 @@ export interface RiskAnalysis {
     positionSize: number;
     holdingPeriod: number;
   };
+  factorWeights: typeof FACTOR_WEIGHTS;
   dataSourcesUsed: string[];
   dataSourcesReport: DataSourcesReport;
   /** Values shown in UI as proof of live fetches */
@@ -170,6 +184,7 @@ class RiskEngine {
         suggestedPositionSize,
         confidence,
         marketFactors: riskFactors,
+        factorWeights: FACTOR_WEIGHTS,
         dataSourcesUsed,
         dataSourcesReport,
         liveSnapshot: {
@@ -255,7 +270,7 @@ class RiskEngine {
     return factors;
   }
 
-  private calculateVolatilityFromKlines(klines: any[], holdingPeriod: HoldingPeriod): number {
+  private calculateVolatilityFromKlines(klines: any[], _holdingPeriod: HoldingPeriod): number {
     if (!klines || klines.length < 2) return 70; // High risk if no data
     
     // Calculate price volatility from klines
@@ -466,24 +481,11 @@ class RiskEngine {
   }
 
   private combineRiskFactors(factors: Record<string, number>): number {
-    const weights: Record<string, number> = {
-      volatility: 0.18,
-      sentiment: 0.1,
-      volume: 0.1,
-      trend: 0.15,
-      liquidity: 0.1,
-      execution: 0.1,
-      sector: 0.07,
-      macro: 0.05,
-      positionSize: 0.1,
-      holdingPeriod: 0.05,
-    };
-
     let weightedSum = 0;
     let totalWeight = 0;
 
     Object.entries(factors).forEach(([factor, value]) => {
-      const weight = weights[factor] ?? 0;
+      const weight = FACTOR_WEIGHTS[factor] ?? 0;
       if (weight <= 0) return;
       weightedSum += value * weight;
       totalWeight += weight;
@@ -563,7 +565,7 @@ class RiskEngine {
     return reasons;
   }
 
-  private generateSaferAction(decision: Decision, riskScore: number, input: TradeInput): string {
+  private generateSaferAction(decision: Decision, _riskScore: number, _input: TradeInput): string {
     switch (decision) {
       case 'APPROVE':
         return 'Proceed with the trade as planned';
@@ -578,7 +580,7 @@ class RiskEngine {
     }
   }
 
-  private calculateSaferPositionSize(amount: number, riskScore: number, riskProfile: RiskProfile): string {
+  private calculateSaferPositionSize(amount: number, riskScore: number, _riskProfile: RiskProfile): string {
     if (riskScore <= 25) return 'Current size is appropriate';
     
     const reductionFactor = Math.min(0.8, (riskScore - 25) / 100);
