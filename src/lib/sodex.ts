@@ -15,6 +15,20 @@ export interface SodexSymbol {
   name?: string;
   makerFee?: string;
   takerFee?: string;
+  /** Numeric symbolID required for signed order placement (GET /markets/symbols) */
+  id?: number;
+  tickSize?: string;
+  stepSize?: string;
+  pricePrecision?: number;
+  quantityPrecision?: number;
+  minNotional?: string;
+}
+
+export interface SodexAccountState {
+  address: string;
+  accountID: number;
+  userID: number;
+  balances: Array<{ coinID: number; coin: string; total: string; locked: string }>;
 }
 
 export interface SodexCoin {
@@ -160,6 +174,10 @@ class SoDEXAPI {
   private symbolsCache: { at: number; rows: Record<string, unknown>[] } | null = null;
   private static readonly SYMBOLS_TTL_MS = 5 * 60 * 1000;
 
+  get configuredNetwork(): 'testnet' | 'mainnet' {
+    return this.network;
+  }
+
   constructor() {
     const useTestnet = (process.env.SODEX_USE_TESTNET ?? 'true').toLowerCase() !== 'false';
     this.network = useTestnet ? 'testnet' : 'mainnet';
@@ -186,8 +204,15 @@ class SoDEXAPI {
     return payload;
   }
 
-  private async fetchSpot(path: string): Promise<unknown> {
-    const url = `${this.spotBaseUrl}${path.startsWith('/') ? path : `/${path}`}`;
+  /** Read-only mainnet base URL, independent of SODEX_USE_TESTNET — used only for historical
+   * backtest data (real prices), never for order placement (execution stays testnet-only). */
+  static readonly MAINNET_SPOT_URL = (
+    process.env.SODEX_MAINNET_SPOT_URL || 'https://mainnet-gw.sodex.dev/api/v1/spot'
+  ).replace(/\/$/, '');
+
+  private async fetchSpot(path: string, baseUrlOverride?: string): Promise<unknown> {
+    const base = baseUrlOverride ?? this.spotBaseUrl;
+    const url = `${base}${path.startsWith('/') ? path : `/${path}`}`;
     const response = await fetch(url, {
       headers: {
         Accept: 'application/json',
@@ -389,6 +414,96 @@ class SoDEXAPI {
     return rows.map((r) => this.normalizeKline(r));
   }
 
+  /**
+   * Real historical klines, always read from SoDEX **mainnet** regardless of SODEX_USE_TESTNET.
+   * Used only by src/lib/backtest.ts for genuine price history — never for execution.
+   */
+  async getSpotKlinesFromMainnet(
+    symbol: string,
+    interval: string,
+    limit = 100,
+    startTime?: number,
+    endTime?: number
+  ): Promise<SodexKline[]> {
+    const sodexSymbol = this.mapSymbolToSodexFormat(symbol);
+    let path = `/markets/${encodeURIComponent(sodexSymbol)}/klines?interval=${encodeURIComponent(
+      interval
+    )}&limit=${limit}`;
+    if (startTime !== undefined) path += `&startTime=${startTime}`;
+    if (endTime !== undefined) path += `&endTime=${endTime}`;
+    const rows = (await this.fetchSpot(path, SoDEXAPI.MAINNET_SPOT_URL)) as Record<string, unknown>[];
+    if (!Array.isArray(rows)) throw new Error('SoDEX mainnet klines: unexpected shape');
+    return rows.map((r) => this.normalizeKline(r));
+  }
+
+  /** Numeric symbolID required for signed order placement (distinct from the string market name). */
+  async getSpotSymbolID(symbol: string): Promise<number> {
+    const sodexSymbol = this.mapSymbolToSodexFormat(symbol);
+    const rows = await this.getSymbolsRowsCached();
+    const row = rows.find((s) => String(s.name ?? '') === sodexSymbol);
+    const id = row ? Number(row.id) : NaN;
+    if (!Number.isFinite(id)) throw new Error(`SoDEX symbolID not found for ${symbol} (${sodexSymbol})`);
+    return id;
+  }
+
+  /** Symbol trading rules (tick/step size, precision) needed to format signed order price/quantity. */
+  async getSpotSymbolRules(symbol: string): Promise<{
+    symbolID: number;
+    tickSize: number;
+    stepSize: number;
+    pricePrecision: number;
+    quantityPrecision: number;
+    minNotional: number;
+  }> {
+    const sodexSymbol = this.mapSymbolToSodexFormat(symbol);
+    const rows = await this.getSymbolsRowsCached();
+    const row = rows.find((s) => String(s.name ?? '') === sodexSymbol);
+    if (!row) throw new Error(`SoDEX symbol rules not found for ${symbol} (${sodexSymbol})`);
+    const id = Number(row.id);
+    if (!Number.isFinite(id)) throw new Error(`SoDEX symbolID not found for ${symbol} (${sodexSymbol})`);
+    return {
+      symbolID: id,
+      tickSize: parseFloat(String(row.tickSize ?? '0.01')),
+      stepSize: parseFloat(String(row.stepSize ?? '0.01')),
+      pricePrecision: Number(row.pricePrecision ?? 2),
+      quantityPrecision: Number(row.quantityPrecision ?? 2),
+      minNotional: parseFloat(String(row.minNotional ?? '0')),
+    };
+  }
+
+  /**
+   * Resolves a wallet address to its SoDEX accountID. Public, no auth required.
+   * Always reads from this instance's configured network (testnet by default —
+   * matches where order placement actually happens).
+   */
+  async getAccountState(address: string): Promise<SodexAccountState> {
+    const NOT_ONBOARDED_MESSAGE =
+      'This wallet has no SoDEX testnet account yet. Visit https://testnet.sodex.com, connect this wallet, and claim testnet funds from the faucet, then try again.';
+
+    let raw: { user?: string; aid?: number; uid?: number; B?: Array<{ i: number; a: string; t: string; l: string }> };
+    try {
+      raw = (await this.fetchSpot(`/accounts/${address}/state`)) as typeof raw;
+    } catch (err) {
+      // SoDEX returns code -1 "invalid parameter: userAddress" for addresses it has
+      // never seen at all (never onboarded), which unwrap() turns into a thrown Error.
+      throw new Error(NOT_ONBOARDED_MESSAGE, { cause: err });
+    }
+    const accountID = Number(raw?.aid);
+    if (!Number.isFinite(accountID) || accountID <= 0) {
+      // SoDEX also returns code 0 with aid:0 for some addresses it has seen but that
+      // never completed account creation — Go's validator treats 0 as "missing" on
+      // submit, so catch it here with an actionable message instead of a cryptic
+      // "AccountID required" error at order time.
+      throw new Error(NOT_ONBOARDED_MESSAGE);
+    }
+    return {
+      address,
+      accountID,
+      userID: Number(raw?.uid ?? accountID),
+      balances: (raw?.B ?? []).map((b) => ({ coinID: b.i, coin: b.a, total: b.t, locked: b.l })),
+    };
+  }
+
   async getSpotTrades(symbol: string, limit = 100): Promise<SodexTrade[]> {
     const sodexSymbol = this.mapSymbolToSodexFormat(symbol);
     const rows = (await this.fetchSpot(
@@ -448,6 +563,20 @@ class SoDEXAPI {
       ask = tmp;
     }
     return { bidPrice: bid, askPrice: ask };
+  }
+
+  /**
+   * Public wrapper for order preparation (place-order route): resolves usable bid/ask
+   * with the same bookTicker → orderbook → last-trade fallback chain execution preview
+   * already relies on, instead of failing outright on SoDEX testnet's frequently
+   * one-sided/thin books (e.g. bids present, asks empty).
+   */
+  async getExecutionReferencePrices(symbol: string): Promise<{ bidPrice: number; askPrice: number }> {
+    const [orderbook, bookTicker] = await Promise.all([
+      this.getSpotOrderbook(symbol, 100),
+      this.getSpotBookTicker(symbol),
+    ]);
+    return this.resolveTopOfBookPrices(symbol, orderbook, bookTicker);
   }
 
   private async analyzeLiquidityFromData(

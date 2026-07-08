@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { storageManager } from '@/lib/storage';
+import { storageManager, WatchlistItem, SavedReport } from '@/lib/storage';
 import { toast } from '@/lib/toast';
 
 // Types for real data
@@ -41,11 +41,47 @@ interface RiskAlert {
   timestamp: number;
 }
 
+function calculateMetricsFromReports(reports: SavedReport[]): DashboardMetrics {
+  if (reports.length === 0) {
+    return {
+      averageRiskScore: null,
+      blockedTrades: 0,
+      reducedSizeRecommendations: 0,
+      highRiskAlerts: 0,
+      blockedNotionalUsd: 0,
+      tradesChecked: 0
+    };
+  }
+
+  const totalRiskScore = reports.reduce((sum, report) => sum + report.riskScore, 0);
+  const averageRiskScore = Math.round(totalRiskScore / reports.length);
+  const blockedTrades = reports.filter(report => report.decision === 'BLOCK').length;
+  const reducedSizeRecommendations = reports.filter(report =>
+    report.recommendedAction.toLowerCase().includes('reduce')
+  ).length;
+
+  const blockedReports = reports.filter((report) => report.decision === 'BLOCK');
+  const blockedNotionalUsd = Math.round(
+    blockedReports.reduce((sum, report) => sum + (Number(report.amount) || 0), 0)
+  );
+
+  const highRiskAlerts = reports.filter(report => report.riskScore >= 70).length;
+
+  return {
+    averageRiskScore,
+    blockedTrades,
+    reducedSizeRecommendations,
+    highRiskAlerts,
+    blockedNotionalUsd,
+    tradesChecked: reports.length
+  };
+}
+
 export default function DashboardPage() {
   const [metrics, setMetrics] = useState<DashboardMetrics | null>(null);
   const [recentTradeChecks, setRecentTradeChecks] = useState<TradeCheck[]>([]);
   const [alerts, setAlerts] = useState<RiskAlert[]>([]);
-  const [watchlist, setWatchlist] = useState<any[]>([]);
+  const [watchlist, setWatchlist] = useState<WatchlistItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -126,42 +162,6 @@ export default function DashboardPage() {
       window.removeEventListener('tradefirewall-reports-changed', onReportsChanged as EventListener);
     };
   }, []);
-
-  const calculateMetricsFromReports = (reports: any[]): DashboardMetrics => {
-    if (reports.length === 0) {
-      return {
-        averageRiskScore: null,
-        blockedTrades: 0,
-        reducedSizeRecommendations: 0,
-        highRiskAlerts: 0,
-        blockedNotionalUsd: 0,
-        tradesChecked: 0
-      };
-    }
-
-    const totalRiskScore = reports.reduce((sum, report) => sum + report.riskScore, 0);
-    const averageRiskScore = Math.round(totalRiskScore / reports.length);
-    const blockedTrades = reports.filter(report => report.decision === 'BLOCK').length;
-    const reducedSizeRecommendations = reports.filter(report => 
-      report.recommendedAction.toLowerCase().includes('reduce')
-    ).length;
-    
-    const blockedReports = reports.filter((report) => report.decision === 'BLOCK');
-    const blockedNotionalUsd = Math.round(
-      blockedReports.reduce((sum, report) => sum + (Number(report.amount) || 0), 0)
-    );
-
-    const highRiskAlerts = reports.filter(report => report.riskScore >= 70).length;
-
-    return {
-      averageRiskScore,
-      blockedTrades,
-      reducedSizeRecommendations,
-      highRiskAlerts,
-      blockedNotionalUsd,
-      tradesChecked: reports.length
-    };
-  };
 
   const getDecisionBadge = (decision: string) => {
     const variants = {

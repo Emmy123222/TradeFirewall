@@ -9,7 +9,7 @@ export interface RiskReportData {
   riskProfile: string;
   riskScore: number;
   decision: string;
-  riskFactors: any;
+  riskFactors: Record<string, number>;
   explanation: string;
   recommendedAction: string;
   suggestedPositionSize: string;
@@ -363,7 +363,7 @@ class PDFGenerator {
     return 'high';
   }
 
-  private generateRiskFactorsHTML(riskFactors: any): string {
+  private generateRiskFactorsHTML(riskFactors: Record<string, number> | undefined): string {
     if (!riskFactors || typeof riskFactors !== 'object') {
       return '<div class="factor-item"><span>Risk factors data not available</span></div>';
     }

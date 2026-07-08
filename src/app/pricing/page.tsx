@@ -552,15 +552,15 @@ export default function PricingPage() {
               <div>
                 <h3 className="text-card-heading mb-2">Can I cancel anytime?</h3>
                 <p className="text-body">
-                  Yes, all plans can be canceled at any time. You'll retain access until the end of your billing period, 
-                  and we don't charge cancellation fees.
+                  Yes, all plans can be canceled at any time. You&apos;ll retain access until the end of your billing period,
+                  and we don&apos;t charge cancellation fees.
                 </p>
               </div>
               
               <div>
                 <h3 className="text-card-heading mb-2">Do you offer refunds?</h3>
                 <p className="text-body">
-                  We offer a 7-day money-back guarantee for all paid plans. If you're not satisfied, 
+                  We offer a 7-day money-back guarantee for all paid plans. If you&apos;re not satisfied,
                   contact support for a full refund.
                 </p>
               </div>

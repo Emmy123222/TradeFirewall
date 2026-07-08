@@ -86,13 +86,10 @@ export const toast = new ToastManager();
 
 // React hook for using toasts in components
 export function useToast() {
-  const [toasts, setToasts] = React.useState<ToastMessage[]>([]);
+  const [toasts, setToasts] = React.useState<ToastMessage[]>(() => toast.getToasts());
 
   React.useEffect(() => {
-    const unsubscribe = toast.subscribe(setToasts);
-    setToasts(toast.getToasts());
-    
-    return unsubscribe;
+    return toast.subscribe(setToasts);
   }, []);
 
   return {

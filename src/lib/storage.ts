@@ -19,7 +19,7 @@ export interface SavedReport {
   riskProfile: string;
   riskScore: number;
   decision: string;
-  riskFactors: any;
+  riskFactors: Record<string, number>;
   explanation: string;
   recommendedAction: string;
   suggestedPositionSize: string;

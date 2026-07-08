@@ -3,12 +3,15 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { RiskExplanation } from '@/lib/riskExplanation';
+import { RiskAnalysis } from '@/lib/riskEngine';
+import { CalibrationPanel } from '@/components/CalibrationPanel';
 
 interface RiskExplanationBoxProps {
   explanation: RiskExplanation;
+  riskAnalysis?: RiskAnalysis;
 }
 
-export function RiskExplanationBox({ explanation }: RiskExplanationBoxProps) {
+export function RiskExplanationBox({ explanation, riskAnalysis }: RiskExplanationBoxProps) {
   return (
     <div className="space-y-6">
       <Card className="terminal-card">
@@ -30,8 +33,22 @@ export function RiskExplanationBox({ explanation }: RiskExplanationBoxProps) {
             <h4 className="text-label mb-3">Market Context</h4>
             <p className="text-body leading-relaxed">{explanation.marketContext}</p>
           </div>
+
+          <div>
+            <h4 className="text-label mb-3">Why This Decision?</h4>
+            <p className="text-body leading-relaxed">{explanation.calibrationNote}</p>
+          </div>
         </CardContent>
       </Card>
+
+      {riskAnalysis && (
+        <CalibrationPanel
+          riskScore={riskAnalysis.riskScore}
+          calibration={riskAnalysis.calibration}
+          reliability={riskAnalysis.reliability}
+          confidence={riskAnalysis.confidence}
+        />
+      )}
 
       <Card className="terminal-card">
         <CardHeader>

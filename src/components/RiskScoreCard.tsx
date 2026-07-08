@@ -2,15 +2,17 @@
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Decision } from '@/lib/riskEngine';
+import { Decision, RiskAnalysis } from '@/lib/riskEngine';
 
 interface RiskScoreCardProps {
   riskScore: number;
   decision: Decision;
   confidence: number;
+  calibration?: RiskAnalysis['calibration'];
+  reliability?: RiskAnalysis['reliability'];
 }
 
-export function RiskScoreCard({ riskScore, decision, confidence }: RiskScoreCardProps) {
+export function RiskScoreCard({ riskScore, decision, confidence, calibration, reliability }: RiskScoreCardProps) {
   const getScoreColor = (score: number) => {
     if (score >= 76) return 'risk-critical';
     if (score >= 51) return 'risk-high';
@@ -88,7 +90,20 @@ export function RiskScoreCard({ riskScore, decision, confidence }: RiskScoreCard
               {Math.round(confidence * 100)}%
             </span>
           </div>
+          {reliability && (
+            <p className="text-xs text-text-secondary max-w-xs mx-auto leading-relaxed">{reliability.note}</p>
+          )}
         </div>
+
+        {calibration && (
+          <div className="space-y-1.5 pt-2 border-t border-border text-left">
+            <div className="text-label text-center">Calibration</div>
+            <p className="text-xs text-text-secondary leading-relaxed">
+              <span className="text-text-primary font-medium">{calibration.label}</span> band (
+              {calibration.scoreRange[0]}-{calibration.scoreRange[1]}): {calibration.typicalCases}
+            </p>
+          </div>
+        )}
       </CardContent>
     </Card>
   );

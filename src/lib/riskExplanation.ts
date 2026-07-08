@@ -8,6 +8,9 @@ export interface RiskExplanation {
   recommendation: string;
   alternatives: string[];
   disclaimer: string;
+  /** "What this score historically means" + known limitations, from riskCalibration.ts */
+  calibrationNote: string;
+  knownLimitations: string;
 }
 
 class RiskExplanationGenerator {
@@ -18,6 +21,8 @@ class RiskExplanationGenerator {
     const recommendation = this.generateRecommendation(riskAnalysis, tradeInput);
     const alternatives = this.generateAlternatives(riskAnalysis, tradeInput);
     const disclaimer = this.generateDisclaimer();
+    const calibrationNote = this.generateCalibrationNote(riskAnalysis);
+    const knownLimitations = this.generateKnownLimitations(riskAnalysis);
 
     return {
       summary,
@@ -25,8 +30,19 @@ class RiskExplanationGenerator {
       marketContext,
       recommendation,
       alternatives,
-      disclaimer
+      disclaimer,
+      calibrationNote,
+      knownLimitations,
     };
+  }
+
+  private generateCalibrationNote(riskAnalysis: RiskAnalysis): string {
+    const { calibration, reliability } = riskAnalysis;
+    return `${calibration.label} band (${calibration.scoreRange[0]}-${calibration.scoreRange[1]}): ${calibration.typicalCases} ${reliability.note}`;
+  }
+
+  private generateKnownLimitations(riskAnalysis: RiskAnalysis): string {
+    return riskAnalysis.calibration.failureMode;
   }
 
   private generateSummary(riskAnalysis: RiskAnalysis, tradeInput: TradeInput): string {
@@ -133,6 +149,10 @@ class RiskExplanationGenerator {
       recommendation += `${suggestedPositionSize} or wait for more favorable market conditions to develop.`;
     } else {
       recommendation += "Waiting for better market alignment will likely provide superior risk-adjusted opportunities.";
+    }
+
+    if (riskAnalysis.reliability.level !== 'high') {
+      recommendation += ` (${riskAnalysis.reliability.note})`;
     }
 
     return recommendation;

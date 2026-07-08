@@ -11,6 +11,7 @@ import { RiskScoreCard } from '@/components/RiskScoreCard';
 import { RiskFactorsList } from '@/components/RiskFactorsList';
 import { RiskExplanationBox } from '@/components/RiskExplanationBox';
 import { ConfirmationGate } from '@/components/ConfirmationGate';
+import { SoDEXOrderPlacement } from '@/components/SoDEXOrderPlacement';
 import { TradeInput, RiskAnalysis } from '@/lib/riskEngine';
 import { RiskExplanation } from '@/lib/riskExplanation';
 import { storageManager, WatchlistItem, SavedReport } from '@/lib/storage';
@@ -75,13 +76,15 @@ export default function CheckTradePage() {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
   const [showConfirmation, setShowConfirmation] = useState(false);
-  const [executionResult, setExecutionResult] = useState<any>(null);
   const [currentTrade, setCurrentTrade] = useState<TradeInput | null>(null);
   const [watchlist, setWatchlist] = useState<WatchlistItem[]>([]);
   const [recentReports, setRecentReports] = useState<SavedReport[]>([]);
 
-  // Load saved data on component mount
+  // Load saved data on component mount. Must run in an effect (not a lazy useState
+  // initializer) since localStorage isn't available during SSR — reading it eagerly
+  // would mismatch the server-rendered HTML.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- SSR-safe localStorage hydration, not derived state
     setWatchlist(storageManager.getWatchlist());
     setRecentReports(storageManager.getReports().slice(0, 5));
   }, []);
@@ -116,7 +119,6 @@ export default function CheckTradePage() {
     setLoadStep(0);
     setAnalysisResult(null);
     setShowConfirmation(false);
-    setExecutionResult(null);
     setCurrentTrade(tradeInput);
 
     // Advance loading steps on a simple timer so users see progress
@@ -181,37 +183,6 @@ export default function CheckTradePage() {
       clearInterval(stepTimer);
       setLoadStep(LOAD_STEPS.length - 1);
       setIsLoading(false);
-    }
-  };
-
-  const handleExecuteTrade = async () => {
-    if (!analysisResult) return;
-
-    try {
-      const response = await fetch('/api/execute-trade', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          symbol: analysisResult.tradeInput.symbol,
-          action: analysisResult.tradeInput.action,
-          amount: analysisResult.tradeInput.amount,
-          confirmed: true,
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to execute trade');
-      }
-
-      const result = await response.json();
-      setExecutionResult(result);
-      setShowConfirmation(false);
-      toast.success('Trade executed successfully in preview mode.');
-    } catch (error) {
-      console.error('Execution error:', error);
-      toast.error('Failed to execute trade. Please try again.');
     }
   };
 
@@ -287,7 +258,6 @@ export default function CheckTradePage() {
   const handleNewAnalysis = () => {
     setAnalysisResult(null);
     setShowConfirmation(false);
-    setExecutionResult(null);
     setCurrentTrade(null);
     toast.info('New analysis started.');
     
@@ -724,6 +694,8 @@ export default function CheckTradePage() {
                 riskScore={analysisResult.riskAnalysis.riskScore}
                 decision={analysisResult.riskAnalysis.decision}
                 confidence={analysisResult.riskAnalysis.confidence}
+                calibration={analysisResult.riskAnalysis.calibration}
+                reliability={analysisResult.riskAnalysis.reliability}
               />
             </div>
           )}
@@ -744,13 +716,7 @@ export default function CheckTradePage() {
                       {analysisResult.riskAnalysis.suggestedPositionSize}
                     </div>
                   </div>
-                  
-                  {analysisResult.riskAnalysis.decision === 'APPROVE' && (
-                    <Button onClick={handleExecuteTrade} className="w-full btn-primary">
-                      Execute Trade
-                    </Button>
-                  )}
-                  
+
                   <div className="grid grid-cols-2 gap-2">
                     <Button onClick={handleAddToWatchlist} className="btn-secondary text-sm">Add to Watchlist</Button>
                     <Button onClick={handleSaveReport} className="btn-secondary text-sm">Save Report</Button>
@@ -769,6 +735,17 @@ export default function CheckTradePage() {
                   </div>
                 </CardContent>
               </Card>
+            </div>
+          )}
+
+          {/* SoDEX Testnet Execution - Full Width */}
+          {analysisResult && !showConfirmation && (!beginnerMode || showAdvanced) && (
+            <div className="col-span-12">
+              <SoDEXOrderPlacement
+                tradeInput={analysisResult.tradeInput}
+                riskScore={analysisResult.riskAnalysis.riskScore}
+                decision={analysisResult.riskAnalysis.decision}
+              />
             </div>
           )}
 
@@ -833,7 +810,7 @@ export default function CheckTradePage() {
           {/* Risk Intelligence Explanation - Full Width */}
           {analysisResult && !showConfirmation && (!beginnerMode || showAdvanced) && (
             <div className="col-span-12">
-              <RiskExplanationBox explanation={analysisResult.riskExplanation} />
+              <RiskExplanationBox explanation={analysisResult.riskExplanation} riskAnalysis={analysisResult.riskAnalysis} />
             </div>
           )}
 
@@ -843,35 +820,10 @@ export default function CheckTradePage() {
               <ConfirmationGate
                 tradeInput={analysisResult.tradeInput}
                 riskScore={analysisResult.riskAnalysis.riskScore}
-                onConfirm={handleExecuteTrade}
+                decision={analysisResult.riskAnalysis.decision}
                 onCancel={handleCancelTrade}
                 onReduceSize={handleReduceSize}
               />
-            </div>
-          )}
-
-          {/* Execution Preview */}
-          {executionResult && (
-            <div className="col-span-12 lg:col-span-6">
-              <Card className="border-success/30 bg-success/5">
-                <CardHeader>
-                  <CardTitle className="text-lg font-semibold text-success">Execution Preview</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-2 text-sm">
-                    <div className="flex justify-between">
-                      <span className="text-text-secondary">Mode:</span>
-                      <span className="text-text-primary">
-                        {executionResult.mode === 'preview_only' ? 'Preview only (no chain execution)' : executionResult.mode || 'Preview'}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-text-secondary">Status:</span>
-                      <span className="text-success font-medium">{executionResult.status || 'Preview generated'}</span>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
             </div>
           )}
 

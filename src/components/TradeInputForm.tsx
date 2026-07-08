@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { TradeInput } from '@/lib/riskEngine';
+import { TradeInput, HoldingPeriod, RiskProfile } from '@/lib/riskEngine';
 
 interface TradeInputFormProps {
   onSubmit: (tradeInput: TradeInput) => void;
@@ -94,7 +94,7 @@ export function TradeInputForm({ onSubmit, isLoading = false }: TradeInputFormPr
             
             <div className="space-y-2">
               <label className="text-label">Holding Period</label>
-              <Select value={formData.holdingPeriod} onValueChange={(value: any) => setFormData({ ...formData, holdingPeriod: value })}>
+              <Select value={formData.holdingPeriod} onValueChange={(value: HoldingPeriod) => setFormData({ ...formData, holdingPeriod: value })}>
                 <SelectTrigger className="bg-card border-border text-text-primary h-12 rounded-lg">
                   <SelectValue />
                 </SelectTrigger>
@@ -110,7 +110,7 @@ export function TradeInputForm({ onSubmit, isLoading = false }: TradeInputFormPr
 
           <div className="space-y-2">
             <label className="text-label">Risk Profile</label>
-            <Select value={formData.riskProfile} onValueChange={(value: any) => setFormData({ ...formData, riskProfile: value })}>
+            <Select value={formData.riskProfile} onValueChange={(value: RiskProfile) => setFormData({ ...formData, riskProfile: value })}>
               <SelectTrigger className="bg-card border-border text-text-primary h-12 rounded-lg">
                 <SelectValue />
               </SelectTrigger>

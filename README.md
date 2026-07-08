@@ -1180,6 +1180,9 @@ TradeFirewall must follow these rules:
 12. API keys must remain server-side.
 13. All user inputs must be validated.
 14. All errors must be shown clearly.
+15. BLOCK decisions have no execution override, ever — not even behind confirmation checkboxes.
+16. REDUCE_OR_WAIT can only reach execution by actually reducing size and re-running analysis, never by confirming through the original oversized trade.
+17. Wallet private keys never leave the browser — the server only ever sees a signature, never a key.
 
 ---
 
@@ -1320,12 +1323,53 @@ timeline
       API Access : External integrations
       Community Bot : Telegram and Discord support
 
+    section Wave 3
+      Quantitative Validation : Real historical backtest on /validate
+      Score Calibration : Band explanations + reliability notes
+      SoDEX Testnet Actions : Wallet-signed testnet execution
+
     section Future
       Wallet Accounts : Account-specific history
-      SoDEX Testnet Actions : Confirmed testnet execution
       LLM Layer : Optional real AI explanation
       Team Plans : Signal groups and fund managers
 ```
+
+---
+
+## Wave 3 — Quantitative Validation, Calibration, Testnet Execution
+
+Wave 3 responds directly to judge feedback: make the product read as a statistically validated, execution-ready risk layer, not a rule-based demo. Nothing from Wave 2 was removed — live SoSoValue + SoDEX data, transparent factor scoring, Simple Mode, proof snapshots, and the confirmation gate are all still there; this wave builds on top of them.
+
+### 1. Quantitative Validation (`/validate`)
+
+`/validate` now has two clearly-labeled sections:
+
+- **Real historical backtest** — `src/lib/backtest.ts` fetches real daily klines from SoDEX **mainnet** (read-only, independent of the testnet execution path) for BTC, ETH, SOL, LINK, AVAX, DOGE, and replays them through the **same pure scoring functions the live engine uses** (`calculateTrendRisk`, `calculateVolumeRisk`, `calculatePositionSizeRisk`, `calculateHoldingPeriodRisk`, `combineRiskFactors`, `determineDecision` — exported from `riskEngine.ts` so live and backtest scoring can never drift apart). Each simulated decision is checked against the real forward price move and classified into a 6-label confusion matrix (Good Block, False Positive, Reduce/Wait Correct, Caution Correct, Good Approval, False Negative). Real dollar-denominated "estimated loss avoided," false-positive/negative rates, and ~20+ curated real example rows (high volatility, bull/bear, low-liquidity-by-volume-proxy, oversized position, real false positives/negatives where the data produces them) are shown, not narrated.
+- **Illustrative scenarios** — the original 5 hand-built stress-test cards (including a 2022-style crash scenario real data can't reach) are kept, now explicitly badged "Illustrative scenario" so they're never confused with the real backtest above.
+
+**Known limitation, stated on the page itself:** SoDEX mainnet daily-kline history only reaches back to ~2025-10-10. The backtest does not claim to cover named historical crashes — it reports genuine statistics over the real window that exists. Five of the ten live factors (sentiment, sector, macro, liquidity, execution) require live SoSoValue/orderbook data that can't be reconstructed historically and are neutral-defaulted (the same fallback the live engine uses when a source is missing). Intraday holding period is not backtested — daily bars can't represent it honestly.
+
+### 2. Risk Score Calibration
+
+`src/lib/riskCalibration.ts` adds a calibration table for each of the four score bands already used across the UI (0-25 / 26-50 / 51-75 / 76-100): why the threshold exists, what kinds of real backtested cases typically land there, the expected failure mode, and confidence guidance. `RiskAnalysis` (in `riskEngine.ts`) now additively carries `calibration` and `reliability` fields on every live analysis — `reliability` is a plain-language "High/Medium/Low confidence: …" note derived from the exact same signals the engine's existing confidence score already inspects (orderbook depth, news count, ticker volume, execution warnings), not new invented signals. Every risk report shows a **Score Calibration** panel (score, band, confidence, what this score historically means, known limitations) alongside the existing factor breakdown.
+
+### 3. Testnet Execution Gate
+
+The flow is now: trade idea → risk analysis → execution preview → confirmation gate → connect wallet / sign → SoDEX testnet order → order result.
+
+- **APPROVE / CAUTION** results render `SoDEXOrderPlacement`, which connects an injected browser wallet (no wallet UI appears before a risk result exists), shows a live execution preview, an order ticket (symbol, side, quantity, order type, protection price, network, risk score) for review, then asks the wallet to sign — nothing is submitted until the user explicitly signs.
+- **REDUCE_OR_WAIT / BLOCK** results keep the existing `ConfirmationGate`, now decision-aware: BLOCK has no execution override at all, not even behind checkboxes; REDUCE_OR_WAIT's only forward path is reducing size and re-running analysis.
+- Signing uses standard EIP-712 (`eth_signTypedData_v4` — any injected wallet supports this natively, no client-side crypto library needed). The exact signing scheme — domain, `ExchangeAction(bytes32 payloadHash, uint64 nonce)` type, `payloadHash = keccak256(compact_json({type, params}))`, header format — is ported directly from SoDEX's public Go SDK (`github.com/sodex-tech/sodex-go-sdk-public`) in `src/lib/sodexOrderSigning.ts`, which lives server-side only; the private key never leaves the browser, and the server never sees anything but a signature.
+- `src/app/api/sodex/place-order/route.ts` resolves `accountID`/`symbolID` from public SoDEX reads, builds a slippage-protected marketable-limit order (LIMIT + IOC, price = current ask/bid ± a configurable protection margin), and re-checks the BLOCK/REDUCE_OR_WAIT gating server-side as a backstop against a tampered client. It is hardcoded to SoDEX's testnet endpoint and explicitly refuses to run at all if `SODEX_USE_TESTNET` isn't `true` — mainnet is not reachable from this route under any input.
+
+**Known limitation:** this environment has no funded SoDEX testnet wallet, so the `prepare` phase (account/symbol resolution, order sizing, payload-hash construction, typed-data generation) has been verified live against SoDEX testnet, but the full sign → submit → fill round trip has not been exercised end-to-end with a real wallet. Errors from SoDEX are surfaced verbatim rather than swallowed either way.
+
+### 4. Known Limitations (Wave 3, summarized)
+
+- Real backtest data covers ~9 months (whatever SoDEX mainnet's kline history holds today), not multi-year or named historical events.
+- 5 of 10 risk factors can't be reconstructed historically; backtest scoring uses the live engine's own neutral-default behavior for those.
+- Short-horizon price-direction prediction from volatility/trend alone is inherently weak in efficient markets — this shows up in the real backtest numbers and is called out on `/validate` rather than hidden.
+- The wallet-signed execution round trip is implemented against SoDEX's documented signing spec but not yet confirmed with a live funded testnet wallet.
 
 ---
 
@@ -1381,6 +1425,16 @@ Replace the placeholder PNGs under `docs/screenshots/` with real captures before
 | ![Generated risk report](./docs/screenshots/risk-report.png) | Risk score, factors, explanation, and data sources block |
 | ![Dashboard](./docs/screenshots/dashboard-reports.png) | Dashboard with metrics from saved real reports |
 
+Additional shots to capture for Wave 3 (not yet in `docs/screenshots/`):
+
+| What to capture |
+| --- |
+| `/validate` real quantitative validation section (summary stat cards + confusion matrix) |
+| `/validate` illustrative-vs-real labeling (both badges visible together) |
+| Score Calibration panel on a risk report |
+| SoDEX Testnet Execution order ticket, pre-signature |
+| SoDEX Testnet Execution order result panel, post-submission |
+
 ---
 
 ## Quality checklist (detailed engineering)
@@ -1413,9 +1467,19 @@ All items verified for Wave 2 submission:
 - [x] README is complete
 - [x] Beginner mode (Simple Mode) added — token + amount → instant result
 - [x] Risk score transparency — factor weights shown, "why blocked" callout visible
-- [x] Validation page at `/validate` — 5 stress-test scenarios with factor breakdowns
+- [x] Validation page at `/validate` — 5 illustrative stress-test scenarios with factor breakdowns
 - [x] Multi-step loading states — per-API progress indicators during live fetch
 - [x] Bug fixes: `sectorPerformance×100` removed, triple orderbook fetch eliminated, dead interface removed
+
+### Wave 3
+
+- [x] `/validate` real quantitative backtest — real SoDEX mainnet historical klines, live-computed confusion matrix, false-positive/negative rates
+- [x] Illustrative vs. real backtest scenarios clearly labeled, both present on `/validate`
+- [x] Score calibration bands + reliability notes on every risk report, additive to `RiskAnalysis`
+- [x] Testnet execution gate — wallet connect, EIP-712 signed order, real SoDEX testnet submission
+- [x] BLOCK has no execution override; REDUCE_OR_WAIT requires resize + re-analysis (enforced client-side and server-side)
+- [x] `npm run typecheck` script added, matches this README's documented command
+- [ ] Full sign → submit → fill round trip confirmed with a live funded testnet wallet (prepare phase verified live; full round trip not yet wallet-tested)
 
 ---
 

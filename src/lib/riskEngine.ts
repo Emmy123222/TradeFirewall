@@ -1,6 +1,27 @@
 // Risk scoring engine for trade analysis — live SoSoValue + SoDEX only (no mock payloads)
-import { sosoValueAPI, APIConnectionError } from './sosovalue';
-import { sodexAPI } from './sodex';
+import { sosoValueAPI, APIConnectionError, SoSoMarketIntelligence } from './sosovalue';
+import { sodexAPI, SodexMarketMicrostructure, SodexExecutionPreview } from './sodex';
+import { getCalibrationBand, getReliabilityNote, CalibrationBandId, ReliabilityNote } from './riskCalibration';
+
+/** Subset of live SoSoValue data the scoring functions read — assembled in analyzeTradeRisk. */
+export interface SosoAnalysisData {
+  marketSummary: SoSoMarketIntelligence['marketSummary'];
+  assetTrend: SoSoMarketIntelligence['assetTrend'];
+  sentiment: SoSoMarketIntelligence['sentiment'];
+  volumeData: SoSoMarketIntelligence['volumeData'];
+  sectorData: SoSoMarketIntelligence['sectorData'];
+  riskContext: SoSoMarketIntelligence['riskContext'];
+}
+
+/** Subset of live SoDEX data the scoring functions read — assembled in analyzeTradeRisk. */
+export interface SodexAnalysisData {
+  ticker: SodexMarketMicrostructure['ticker'];
+  orderbook: SodexMarketMicrostructure['orderbook'];
+  klines: SodexMarketMicrostructure['klines'];
+  recentTrades: SodexMarketMicrostructure['recentTrades'];
+  executionPreview: SodexMarketMicrostructure['executionPreview'];
+  liquidityAnalysis: SodexMarketMicrostructure['liquidityAnalysis'];
+}
 
 export type RiskProfile = 'conservative' | 'balanced' | 'aggressive';
 export type HoldingPeriod = 'intraday' | '1day' | '7days' | '30days';
@@ -53,6 +74,20 @@ export const FACTOR_WEIGHTS: Record<string, number> = {
   holdingPeriod: 0.05,
 };
 
+export interface RiskFactorScores {
+  [key: string]: number;
+  volatility: number;
+  sentiment: number;
+  volume: number;
+  trend: number;
+  liquidity: number;
+  execution: number;
+  sector: number;
+  macro: number;
+  positionSize: number;
+  holdingPeriod: number;
+}
+
 export interface RiskAnalysis {
   riskScore: number; // 0-100
   decision: Decision;
@@ -86,6 +121,146 @@ export interface RiskAnalysis {
     sodexSymbol: string;
     spreadPercent: number;
   };
+  /** Why this score means what it means — see src/lib/riskCalibration.ts */
+  calibration: {
+    band: CalibrationBandId;
+    label: string;
+    scoreRange: [number, number];
+    whyThreshold: string;
+    typicalCases: string;
+    failureMode: string;
+  };
+  reliability: ReliabilityNote;
+}
+
+// ── Pure scoring functions ──────────────────────────────────────────────
+// Extracted so src/lib/backtest.ts can reuse the exact same math the live
+// engine uses instead of re-implementing it — live and backtest scoring can
+// never drift apart.
+
+export function calculateVolatilityFromKlines(klines: Array<{ close: string }>): number {
+  if (!klines || klines.length < 2) return 70; // High risk if no data
+
+  // Calculate price volatility from klines
+  const prices = klines.map((k) => parseFloat(k.close));
+  const returns = [];
+
+  for (let i = 1; i < prices.length; i++) {
+    returns.push((prices[i] - prices[i - 1]) / prices[i - 1]);
+  }
+
+  const variance = returns.reduce((sum, ret) => sum + ret * ret, 0) / returns.length;
+  const volatility = Math.sqrt(variance) * Math.sqrt(24); // Annualized
+
+  // Convert to risk score
+  if (volatility > 0.15) return 90; // Extreme
+  if (volatility > 0.10) return 70; // High
+  if (volatility > 0.05) return 40; // Medium
+  return 20; // Low
+}
+
+export function calculateTrendRisk(assetTrend: { trend: string } | undefined, action: TradeAction): number {
+  if (!assetTrend) return 50; // Neutral if no data
+
+  const trendRiskMap = {
+    strong_bearish: action === 'buy' ? 90 : 20,
+    bearish: action === 'buy' ? 70 : 30,
+    neutral: 50,
+    bullish: action === 'buy' ? 30 : 70,
+    strong_bullish: action === 'buy' ? 20 : 90,
+  };
+
+  return trendRiskMap[assetTrend.trend as keyof typeof trendRiskMap] || 50;
+}
+
+export function calculateVolumeRisk(
+  sosoVolumeData: { volumeChange: number } | undefined,
+  sodexTicker: { volume: string } | undefined
+): number {
+  let volumeRisk = 50; // Default
+
+  if (sosoVolumeData) {
+    // Use SoSoValue volume analysis
+    if (sosoVolumeData.volumeChange < -30) volumeRisk = 80;
+    else if (sosoVolumeData.volumeChange < -15) volumeRisk = 60;
+    else if (sosoVolumeData.volumeChange < 0) volumeRisk = 40;
+    else volumeRisk = 20;
+  } else if (sodexTicker) {
+    // Fallback to SoDEX volume data
+    const volume = parseFloat(sodexTicker.volume);
+    if (volume < 1000) volumeRisk = 80; // Very low volume
+    else if (volume < 10000) volumeRisk = 60;
+    else if (volume < 100000) volumeRisk = 40;
+    else volumeRisk = 20;
+  }
+
+  return volumeRisk;
+}
+
+export function calculatePositionSizeRisk(amount: number, riskProfile: RiskProfile): number {
+  const riskToleranceMap = {
+    conservative: 1000,
+    balanced: 5000,
+    aggressive: 20000,
+  };
+
+  const tolerance = riskToleranceMap[riskProfile];
+  const ratio = amount / tolerance;
+
+  if (ratio > 5) return 90;
+  if (ratio > 3) return 70;
+  if (ratio > 2) return 50;
+  if (ratio > 1) return 30;
+  return 10;
+}
+
+export function calculateHoldingPeriodRisk(holdingPeriod: HoldingPeriod, volatilityRiskScore: number): number {
+  const periodRiskMap: Record<HoldingPeriod, number> = {
+    intraday: 80,
+    '1day': 60,
+    '7days': 40,
+    '30days': 20,
+  };
+
+  const baseRisk = periodRiskMap[holdingPeriod];
+  const volatilityMultiplier =
+    volatilityRiskScore > 75 ? 1.45 : volatilityRiskScore > 55 ? 1.2 : volatilityRiskScore > 40 ? 1.0 : 0.85;
+
+  return Math.min(100, Math.round(baseRisk * volatilityMultiplier));
+}
+
+export function combineRiskFactors(factors: Record<string, number>): number {
+  let weightedSum = 0;
+  let totalWeight = 0;
+
+  Object.entries(factors).forEach(([factor, value]) => {
+    const weight = FACTOR_WEIGHTS[factor] ?? 0;
+    if (weight <= 0) return;
+    weightedSum += value * weight;
+    totalWeight += weight;
+  });
+
+  if (totalWeight <= 0) {
+    throw new Error('Risk engine has no weighted factors to combine');
+  }
+
+  return Math.round(weightedSum / totalWeight);
+}
+
+export function determineDecision(riskScore: number, riskProfile: RiskProfile): Decision {
+  // Adjust thresholds based on risk profile
+  const thresholds = {
+    conservative: { approve: 25, caution: 40, reduce: 60 },
+    balanced: { approve: 35, caution: 50, reduce: 70 },
+    aggressive: { approve: 45, caution: 60, reduce: 80 },
+  };
+
+  const { approve, caution, reduce } = thresholds[riskProfile];
+
+  if (riskScore <= approve) return 'APPROVE';
+  if (riskScore <= caution) return 'CAUTION';
+  if (riskScore <= reduce) return 'REDUCE_OR_WAIT';
+  return 'BLOCK';
 }
 
 class RiskEngine {
@@ -164,12 +339,14 @@ class RiskEngine {
       };
 
       const riskFactors = this.calculateRiskFactors(input, sosoData, sodexData);
-      const riskScore = this.combineRiskFactors(riskFactors);
-      const decision = this.determineDecision(riskScore, input.riskProfile);
+      const riskScore = combineRiskFactors(riskFactors);
+      const decision = determineDecision(riskScore, input.riskProfile);
       const reasons = this.generateReasons(riskFactors, input, sosoData, sodexData);
       const saferAction = this.generateSaferAction(decision, riskScore, input);
       const suggestedPositionSize = this.calculateSaferPositionSize(input.amount, riskScore, input.riskProfile);
       const confidence = this.calculateConfidence(dataSourcesUsed, sosoData, sodexData);
+      const calibrationBand = getCalibrationBand(riskScore);
+      const reliability = getReliabilityNote(confidence, sosoData, sodexData);
 
       const bid = parseFloat(sodexMS.ticker.bidPrice);
       const ask = parseFloat(sodexMS.ticker.askPrice);
@@ -187,6 +364,15 @@ class RiskEngine {
         factorWeights: FACTOR_WEIGHTS,
         dataSourcesUsed,
         dataSourcesReport,
+        calibration: {
+          band: calibrationBand.id,
+          label: calibrationBand.label,
+          scoreRange: calibrationBand.scoreRange,
+          whyThreshold: calibrationBand.whyThreshold,
+          typicalCases: calibrationBand.typicalCases,
+          failureMode: calibrationBand.failureMode,
+        },
+        reliability,
         liveSnapshot: {
           sosoPrice: sosoMI.marketSummary.price,
           sosoChange24hPct: sosoMI.marketSummary.change24h,
@@ -209,8 +395,12 @@ class RiskEngine {
     }
   }
 
-  private calculateRiskFactors(input: TradeInput, sosoData: any, sodexData: any): any {
-    const factors: any = {
+  private calculateRiskFactors(
+    input: TradeInput,
+    sosoData: SosoAnalysisData,
+    sodexData: SodexAnalysisData
+  ): RiskFactorScores {
+    const factors: RiskFactorScores = {
       volatility: 50,
       sentiment: 50,
       volume: 50,
@@ -218,12 +408,14 @@ class RiskEngine {
       liquidity: 50,
       execution: 50,
       sector: 50,
-      macro: 50
+      macro: 50,
+      positionSize: 50,
+      holdingPeriod: 50,
     };
 
     // Calculate volatility risk from SoDEX klines
     if (sodexData.klines) {
-      factors.volatility = this.calculateVolatilityFromKlines(sodexData.klines, input.holdingPeriod);
+      factors.volatility = calculateVolatilityFromKlines(sodexData.klines);
     }
 
     // Calculate sentiment risk from SoSoValue
@@ -233,12 +425,12 @@ class RiskEngine {
 
     // Calculate volume risk from SoSoValue and SoDEX
     if (sosoData.volumeData || sodexData.ticker) {
-      factors.volume = this.calculateVolumeRisk(sosoData.volumeData, sodexData.ticker);
+      factors.volume = calculateVolumeRisk(sosoData.volumeData, sodexData.ticker);
     }
 
     // Calculate trend risk from SoSoValue
     if (sosoData.assetTrend) {
-      factors.trend = this.calculateTrendRisk(sosoData.assetTrend, input.action);
+      factors.trend = calculateTrendRisk(sosoData.assetTrend, input.action);
     }
 
     // Calculate liquidity risk from SoDEX orderbook
@@ -262,36 +454,15 @@ class RiskEngine {
     }
 
     // Add position size risk
-    factors.positionSize = this.calculatePositionSizeRisk(input.amount, input.riskProfile);
-    
+    factors.positionSize = calculatePositionSizeRisk(input.amount, input.riskProfile);
+
     // Add holding period risk
-    factors.holdingPeriod = this.calculateHoldingPeriodRisk(input.holdingPeriod, factors.volatility);
+    factors.holdingPeriod = calculateHoldingPeriodRisk(input.holdingPeriod, factors.volatility);
 
     return factors;
   }
 
-  private calculateVolatilityFromKlines(klines: any[], _holdingPeriod: HoldingPeriod): number {
-    if (!klines || klines.length < 2) return 70; // High risk if no data
-    
-    // Calculate price volatility from klines
-    const prices = klines.map(k => parseFloat(k.close));
-    const returns = [];
-    
-    for (let i = 1; i < prices.length; i++) {
-      returns.push((prices[i] - prices[i-1]) / prices[i-1]);
-    }
-    
-    const variance = returns.reduce((sum, ret) => sum + ret * ret, 0) / returns.length;
-    const volatility = Math.sqrt(variance) * Math.sqrt(24); // Annualized
-    
-    // Convert to risk score
-    if (volatility > 0.15) return 90; // Extreme
-    if (volatility > 0.10) return 70; // High
-    if (volatility > 0.05) return 40; // Medium
-    return 20; // Low
-  }
-
-  private calculateSentimentRisk(sentiment: any): number {
+  private calculateSentimentRisk(sentiment: SosoAnalysisData['sentiment'] | undefined): number {
     if (!sentiment) return 50; // Neutral if no data
     
     // Convert sentiment score (-1 to 1) to risk score (0-100)
@@ -302,42 +473,7 @@ class RiskEngine {
     return 10;
   }
 
-  private calculateVolumeRisk(sosoVolumeData: any, sodexTicker: any): number {
-    let volumeRisk = 50; // Default
-    
-    if (sosoVolumeData) {
-      // Use SoSoValue volume analysis
-      if (sosoVolumeData.volumeChange < -30) volumeRisk = 80;
-      else if (sosoVolumeData.volumeChange < -15) volumeRisk = 60;
-      else if (sosoVolumeData.volumeChange < 0) volumeRisk = 40;
-      else volumeRisk = 20;
-    } else if (sodexTicker) {
-      // Fallback to SoDEX volume data
-      const volume = parseFloat(sodexTicker.volume);
-      if (volume < 1000) volumeRisk = 80; // Very low volume
-      else if (volume < 10000) volumeRisk = 60;
-      else if (volume < 100000) volumeRisk = 40;
-      else volumeRisk = 20;
-    }
-    
-    return volumeRisk;
-  }
-
-  private calculateTrendRisk(assetTrend: any, action: TradeAction): number {
-    if (!assetTrend) return 50; // Neutral if no data
-    
-    const trendRiskMap = {
-      'strong_bearish': action === 'buy' ? 90 : 20,
-      'bearish': action === 'buy' ? 70 : 30,
-      'neutral': 50,
-      'bullish': action === 'buy' ? 30 : 70,
-      'strong_bullish': action === 'buy' ? 20 : 90
-    };
-
-    return trendRiskMap[assetTrend.trend as keyof typeof trendRiskMap] || 50;
-  }
-
-  private calculateLiquidityRisk(orderbook: any, amount: number): number {
+  private calculateLiquidityRisk(orderbook: SodexAnalysisData['orderbook'] | undefined, amount: number): number {
     if (!orderbook) return 70; // High risk if no orderbook data
     
     // Calculate total liquidity within 2% of mid price
@@ -376,7 +512,7 @@ class RiskEngine {
     return 10;
   }
 
-  private calculateExecutionRisk(executionPreview: any): number {
+  private calculateExecutionRisk(executionPreview: SodexExecutionPreview | undefined): number {
     if (!executionPreview) return 70; // High risk if no execution data
     
     let risk = 0;
@@ -402,7 +538,7 @@ class RiskEngine {
     return Math.min(risk, 100);
   }
 
-  private calculateSectorRisk(sectorData: any): number {
+  private calculateSectorRisk(sectorData: SosoAnalysisData['sectorData'] | undefined): number {
     if (!sectorData) return 50; // Neutral if no data
     
     let risk = 50;
@@ -424,7 +560,7 @@ class RiskEngine {
     return Math.max(0, Math.min(100, risk));
   }
 
-  private calculateMacroRisk(riskContext: any): number {
+  private calculateMacroRisk(riskContext: SosoAnalysisData['riskContext'] | undefined): number {
     if (!riskContext) return 50; // Neutral if no data
     
     let risk = 50;
@@ -448,73 +584,12 @@ class RiskEngine {
     return Math.max(0, Math.min(100, risk));
   }
 
-  private calculatePositionSizeRisk(amount: number, riskProfile: RiskProfile): number {
-    const riskToleranceMap = {
-      'conservative': 1000,
-      'balanced': 5000,
-      'aggressive': 20000
-    };
-
-    const tolerance = riskToleranceMap[riskProfile];
-    const ratio = amount / tolerance;
-
-    if (ratio > 5) return 90;
-    if (ratio > 3) return 70;
-    if (ratio > 2) return 50;
-    if (ratio > 1) return 30;
-    return 10;
-  }
-
-  private calculateHoldingPeriodRisk(holdingPeriod: HoldingPeriod, volatilityRiskScore: number): number {
-    const periodRiskMap: Record<HoldingPeriod, number> = {
-      intraday: 80,
-      '1day': 60,
-      '7days': 40,
-      '30days': 20,
-    };
-
-    const baseRisk = periodRiskMap[holdingPeriod];
-    const volatilityMultiplier =
-      volatilityRiskScore > 75 ? 1.45 : volatilityRiskScore > 55 ? 1.2 : volatilityRiskScore > 40 ? 1.0 : 0.85;
-
-    return Math.min(100, Math.round(baseRisk * volatilityMultiplier));
-  }
-
-  private combineRiskFactors(factors: Record<string, number>): number {
-    let weightedSum = 0;
-    let totalWeight = 0;
-
-    Object.entries(factors).forEach(([factor, value]) => {
-      const weight = FACTOR_WEIGHTS[factor] ?? 0;
-      if (weight <= 0) return;
-      weightedSum += value * weight;
-      totalWeight += weight;
-    });
-
-    if (totalWeight <= 0) {
-      throw new Error('Risk engine has no weighted factors to combine');
-    }
-
-    return Math.round(weightedSum / totalWeight);
-  }
-
-  private determineDecision(riskScore: number, riskProfile: RiskProfile): Decision {
-    // Adjust thresholds based on risk profile
-    const thresholds = {
-      'conservative': { approve: 25, caution: 40, reduce: 60 },
-      'balanced': { approve: 35, caution: 50, reduce: 70 },
-      'aggressive': { approve: 45, caution: 60, reduce: 80 }
-    };
-
-    const { approve, caution, reduce } = thresholds[riskProfile];
-
-    if (riskScore <= approve) return 'APPROVE';
-    if (riskScore <= caution) return 'CAUTION';
-    if (riskScore <= reduce) return 'REDUCE_OR_WAIT';
-    return 'BLOCK';
-  }
-
-  private generateReasons(risks: Record<string, number>, input: TradeInput, sosoData?: any, sodexData?: any): string[] {
+  private generateReasons(
+    risks: Record<string, number>,
+    input: TradeInput,
+    sosoData?: SosoAnalysisData,
+    sodexData?: SodexAnalysisData
+  ): string[] {
     const reasons: string[] = [];
 
     if (risks.volatility > 60) {
@@ -589,10 +664,10 @@ class RiskEngine {
     return `Consider reducing to $${Math.round(saferAmount).toLocaleString()}`;
   }
 
-  private calculateConfidence(_dataSourcesUsed: string[], sosoData?: any, sodexData?: any): number {
+  private calculateConfidence(_dataSourcesUsed: string[], sosoData?: SosoAnalysisData, sodexData?: SodexAnalysisData): number {
     let confidence = 0.55;
 
-    if (sodexData?.liquidityAnalysis?.marketDepth > 0) {
+    if ((sodexData?.liquidityAnalysis?.marketDepth ?? 0) > 0) {
       confidence += 0.12;
     }
 
@@ -604,8 +679,9 @@ class RiskEngine {
       confidence += 0.05;
     }
 
-    if (sodexData?.executionPreview?.warnings?.length > 0) {
-      confidence -= sodexData.executionPreview.warnings.length * 0.04;
+    const warningCount = sodexData?.executionPreview?.warnings?.length ?? 0;
+    if (warningCount > 0) {
+      confidence -= warningCount * 0.04;
     }
 
     return Math.max(0.35, Math.min(1.0, confidence));

@@ -2,6 +2,9 @@ import Link from 'next/link';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { runBacktest } from '@/lib/backtest';
+import { ValidationMetrics } from '@/components/ValidationMetrics';
+import { ConfusionMatrix } from '@/components/ConfusionMatrix';
 
 interface Scenario {
   id: string;
@@ -138,11 +141,19 @@ const SCORE_COLOR = (s: number) =>
 const FACTOR_BAR = (s: number) =>
   s >= 70 ? 'bg-danger' : s >= 50 ? 'bg-orange-risk' : s >= 30 ? 'bg-warning' : 'bg-success';
 
-export default function ValidatePage() {
+export default async function ValidatePage() {
   const categoryCounts = SCENARIOS.reduce<Record<string, number>>((acc, s) => {
     acc[s.decision] = (acc[s.decision] ?? 0) + 1;
     return acc;
   }, {});
+
+  let backtestError: string | null = null;
+  let backtest: Awaited<ReturnType<typeof runBacktest>> | null = null;
+  try {
+    backtest = await runBacktest();
+  } catch (e) {
+    backtestError = e instanceof Error ? e.message : 'Backtest unavailable';
+  }
 
   return (
     <div className="min-h-screen bg-background">
@@ -167,10 +178,98 @@ export default function ValidatePage() {
         {/* Header */}
         <div className="space-y-4">
           <div className="text-label text-primary">Validation &amp; Stress Testing</div>
-          <h1 className="text-3xl font-bold text-text-primary">How TradeFirewall responds to real market conditions</h1>
+          <h1 className="text-3xl font-bold text-text-primary">Is TradeFirewall&apos;s risk score actually right?</h1>
           <p className="text-body max-w-3xl leading-relaxed">
-            These five scenarios show exactly what the risk engine returns for known market situations — including a 2022-style crash, low-liquidity altcoins,
-            and a stable bull-market buy. Each scenario traces which factors drove the decision and why.
+            This page has two parts. First, real quantitative validation: real historical price data replayed through the exact same
+            scoring functions the live engine uses, with honest false-positive/negative rates — not a demo, an actual backtest.
+            Second, five hand-built illustrative scenarios that trace a decision factor-by-factor for readability. Each section is
+            labeled so you always know which is which.
+          </p>
+        </div>
+
+        {/* ── Real quantitative validation ─────────────────────────────────── */}
+        <div className="space-y-6">
+          <div className="flex items-center gap-3">
+            <Badge className="bg-primary text-background px-3 py-1 text-xs">Real historical backtest</Badge>
+            <h2 className="text-xl font-bold text-text-primary">Quantitative Validation</h2>
+          </div>
+
+          {backtestError && (
+            <Card className="terminal-card border-danger/30">
+              <CardContent className="pt-6 text-sm text-danger">
+                Backtest unavailable: {backtestError}. This section requires a live read from SoDEX mainnet market data.
+              </CardContent>
+            </Card>
+          )}
+
+          {backtest && (
+            <>
+              <ValidationMetrics aggregate={backtest.aggregate} methodology={backtest.methodology} />
+              <ConfusionMatrix aggregate={backtest.aggregate} />
+
+              <Card className="terminal-card border-primary/20">
+                <CardHeader>
+                  <CardTitle className="text-card-heading">Methodology</CardTitle>
+                </CardHeader>
+                <CardContent className="text-sm text-text-secondary space-y-2 leading-relaxed">
+                  <p>
+                    <span className="text-text-primary font-medium">Data source:</span> {backtest.methodology.dataSource}, symbols{' '}
+                    {backtest.methodology.symbols.join(', ')}, range {backtest.methodology.dateRange} ({backtest.methodology.realCandleCount.toLocaleString()} real daily candles fetched live for this run).
+                    Real market-data history on SoDEX only reaches back this far — this backtest does not claim to cover named historical
+                    events (e.g. a 2022-style crash); it reports genuine statistics over the real window that exists.
+                  </p>
+                  <p>
+                    <span className="text-text-primary font-medium">Reconstructable from history:</span> {backtest.methodology.reconstructableFactors.join(', ')}.
+                  </p>
+                  <p>
+                    <span className="text-text-primary font-medium">Neutral-defaulted (unavailable historically):</span> {backtest.methodology.neutralDefaultedFactors.join(', ')} — same fallback the live engine uses when a source is missing, never a fabricated value.
+                  </p>
+                  <p>
+                    <span className="text-text-primary font-medium">Adverse-move thresholds:</span> 1-day {backtest.methodology.adverseThresholds['1day']}, 7-day {backtest.methodology.adverseThresholds['7days']}, 30-day {backtest.methodology.adverseThresholds['30days']} against the trade direction. Intraday holding period is not backtested — daily bars can&apos;t represent it honestly.
+                  </p>
+                </CardContent>
+              </Card>
+
+              <div>
+                <h3 className="text-lg font-semibold text-text-primary mb-4">What TradeFirewall would have prevented</h3>
+                <div className="grid md:grid-cols-2 gap-4">
+                  {backtest.scenarios.slice(0, 12).map((s, idx) => {
+                    const cfg = DECISION_CONFIG[s.row.decision];
+                    return (
+                      <Card key={idx} className={`terminal-card ${cfg.border}`}>
+                        <CardContent className="pt-6 space-y-2">
+                          <div className="flex items-center justify-between gap-2">
+                            <Badge variant="outline" className="text-xs border-border text-text-secondary">{s.category}</Badge>
+                            <Badge className={`${cfg.cls} text-xs px-2 py-1`}>{cfg.label}</Badge>
+                          </div>
+                          <div className="text-sm font-mono text-text-primary">
+                            {s.row.symbol} · {s.row.action.toUpperCase()} · {s.row.date} · {s.row.holdingPeriod} · {s.row.riskProfile}
+                          </div>
+                          <div className="text-2xl font-bold text-text-primary">{s.row.riskScore}/100</div>
+                          <div className="text-xs text-text-secondary">
+                            Real forward move: <span className={s.row.forwardReturnPct < 0 ? 'text-danger' : 'text-success'}>{(s.row.forwardReturnPct * 100).toFixed(1)}%</span> in trade direction — labeled <span className="text-text-primary font-medium">{s.row.label}</span>
+                          </div>
+                          <p className="text-xs text-text-secondary leading-relaxed">{s.note}</p>
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* ── Illustrative scenarios ────────────────────────────────────────── */}
+        <div className="space-y-4 pt-4 border-t border-border">
+          <div className="flex items-center gap-3">
+            <Badge variant="outline" className="border-border text-text-secondary px-3 py-1 text-xs">Illustrative scenario</Badge>
+            <h2 className="text-xl font-bold text-text-primary">Worked Examples</h2>
+          </div>
+          <p className="text-body max-w-3xl leading-relaxed">
+            These five scenarios use hand-picked, hypothetical parameters (including a stress test modelled on 2022-style crash
+            conditions that the real backtest above can&apos;t reach) to walk through exactly which factors drive a decision, for
+            readability. They are constructed examples, not live or backtested data — see the real section above for that.
           </p>
 
           {/* Summary row */}
